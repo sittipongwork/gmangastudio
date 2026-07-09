@@ -9,6 +9,7 @@
 #include "../math/Rect.hpp"
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
 namespace illus {
@@ -17,14 +18,26 @@ LayerStack::LayerStack(int32_t width, int32_t height)
     : width_(std::max(1, width))
     , height_(std::max(1, height))
 {
-    activeId_ = add("Layer 1");
+    // New project: Background Layer (back, white) + Layer 1 (front / active).
+    // Page clear is transparent — white lives only on this layer (hide → see through).
+    Layer bg;
+    bg.id = nextId_++;
+    bg.name = "Background Layer";
+    bg.isBackground = true;
+    bg.fillSolid(width_, height_, {255, 255, 255, 255});
+    layers_.push_back(std::move(bg));
+
+    nextPaintLayerNumber_ = 1;
+    activeId_ = add(nullptr); // Layer 1 at front
 }
 
 void LayerStack::resizeAll(int32_t width, int32_t height) {
     width_ = std::max(1, width);
     height_ = std::max(1, height);
     for (auto& layer : layers_) {
-        if (layer.hasPixels()) {
+        if (layer.isBackground) {
+            layer.fillSolid(width_, height_, {255, 255, 255, 255});
+        } else if (layer.hasPixels()) {
             layer.ensurePixels(width_, height_);
         }
     }
@@ -33,14 +46,21 @@ void LayerStack::resizeAll(int32_t width, int32_t height) {
 int32_t LayerStack::add(const char* name) {
     Layer layer;
     layer.id = nextId_++;
-    layer.name = name ? name : "Layer";
+    const bool autoName = !name || !name[0] || std::string(name) == "Layer";
+    if (autoName) {
+        layer.name = "Layer " + std::to_string(nextPaintLayerNumber_++);
+    } else {
+        layer.name = name;
+    }
     // Lazy pixels: allocate on first stroke (cpp_optimise).
-    layers_.insert(layers_.begin(), std::move(layer)); // front
+    layers_.insert(layers_.begin(), std::move(layer)); // front = top of list
     activeId_ = layers_.front().id;
     return activeId_;
 }
 
 bool LayerStack::remove(int32_t layerId) {
+    const Layer* target = find(layerId);
+    if (!target || target->isBackground) return false;
     if (layers_.size() <= 1) return false;
     const auto it = std::find_if(layers_.begin(), layers_.end(), [&](const Layer& l) {
         return l.id == layerId;
@@ -49,16 +69,24 @@ bool LayerStack::remove(int32_t layerId) {
     const bool wasActive = it->id == activeId_;
     layers_.erase(it);
     if (wasActive) {
+        // Prefer a paint layer; fall back to front.
         activeId_ = layers_.front().id;
+        for (const auto& layer : layers_) {
+            if (!layer.isBackground) {
+                activeId_ = layer.id;
+                break;
+            }
+        }
     }
     return true;
 }
 
 std::optional<int32_t> LayerStack::duplicate(int32_t layerId) {
     const Layer* src = find(layerId);
-    if (!src) return std::nullopt;
+    if (!src || src->isBackground) return std::nullopt;
     Layer copy = *src;
     copy.id = nextId_++;
+    copy.isBackground = false;
     copy.name = src->name + " copy";
     const int32_t idx = indexOf(layerId);
     layers_.insert(layers_.begin() + idx, std::move(copy));
@@ -71,6 +99,12 @@ bool LayerStack::move(int32_t layerId, int32_t toIndex) {
     if (from < 0) return false;
     toIndex = std::clamp(toIndex, 0, count() - 1);
     if (from == toIndex) return true;
+    // Keep Background Layer at the back.
+    if (layers_[static_cast<size_t>(from)].isBackground) return false;
+    if (toIndex == count() - 1 && layers_.back().isBackground) {
+        toIndex = count() - 2;
+        if (toIndex < 0) return false;
+    }
     Layer layer = std::move(layers_[static_cast<size_t>(from)]);
     layers_.erase(layers_.begin() + from);
     layers_.insert(layers_.begin() + toIndex, std::move(layer));
@@ -81,7 +115,7 @@ bool LayerStack::mergeDown(int32_t srcId, int32_t dstId) {
     if (srcId == dstId || layers_.size() <= 1) return false;
     Layer* src = find(srcId);
     Layer* dst = find(dstId);
-    if (!src || !dst) return false;
+    if (!src || !dst || src->isBackground) return false;
 
     if (src->hasPixels() && src->visible && src->opacity > 0.f) {
         dst->ensurePixels(width_, height_);

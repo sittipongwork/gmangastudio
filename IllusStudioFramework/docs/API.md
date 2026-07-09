@@ -26,8 +26,8 @@ Related: [README.md](../README.md) · [ROADMAP.md](ROADMAP.md) · [canvas_docume
 | `~CanvasEditor()` | — | |
 | `width()` | `int32_t` | Page width (px) |
 | `height()` | `int32_t` | Page height (px) |
-| `setBackground(r, g, b, a)` | `void` | Page clear / background RGBA |
-| `clearAll(r, g, b, a)` | `void` | Clear document + set background |
+| `setBackground(r, g, b, a)` | `void` | Fill Background Layer (page underlay stays transparent) |
+| `clearAll(r, g, b, a)` | `void` | Clear paint layers; refill Background Layer |
 | `clearActiveLayer()` | `void` | Clear pixels + strokes on active layer |
 
 ---
@@ -37,6 +37,8 @@ Related: [README.md](../README.md) · [ROADMAP.md](ROADMAP.md) · [canvas_docume
 | API | Returns | Notes |
 |-----|---------|-------|
 | `layerCount()` | `int32_t` | |
+| `layerIdAt(index)` | `int32_t` | Index 0 = front; `-1` if invalid |
+| `layerName(layerId)` | `const char*` | Borrowed C string |
 | `addLayer(name)` | `int32_t` | New layer id |
 | `removeLayer(layerId)` | `bool` | |
 | `setActiveLayer(layerId)` | `bool` | |
@@ -45,10 +47,12 @@ Related: [README.md](../README.md) · [ROADMAP.md](ROADMAP.md) · [canvas_docume
 | `layerOpacity(layerId)` | `float` | |
 | `setLayerVisible(layerId, visible)` | `bool` | |
 | `layerVisible(layerId)` | `bool` | |
+| `layerIsBackground(layerId)` | `bool` | Document background layer (not removable) |
 | `duplicateLayer(layerId)` | `int32_t` | New id, or fail |
 | `moveLayer(layerId, toIndex)` | `bool` | Reorder in stack |
 | `mergeLayerDown(srcId, dstId)` | `bool` | Merge src into dst |
 | `layerIndex(layerId)` | `int32_t` | Stack index |
+| `copyLayerThumbnailRGBA(layerId, outW, outH, outRGBA, outByteCount)` | `bool` | Nearest downsample to RGBA8 thumb |
 
 Spec: [layer.md](layer.md)
 
@@ -72,6 +76,7 @@ Spec: [layer.md](layer.md)
 | `brushPresetCount()` | `int32_t` | Flat list |
 | `brushPresetCountInSet(setIndex)` | `int32_t` | |
 | `brushPresetName(index)` | `const char*` | Flat index |
+| `brushPresetNameInSet(setIndex, presetIndex)` | `const char*` | Name within set |
 | `setBrushPreset(index)` | `bool` | Flat index |
 | `setBrushPresetInSet(setIndex, presetIndex)` | `bool` | |
 | `activeBrushPresetIndex()` | `int32_t` | Flat index |

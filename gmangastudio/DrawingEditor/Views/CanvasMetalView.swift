@@ -72,6 +72,12 @@ final class CanvasMetalRenderer: NSObject, MTKViewDelegate {
         desc.vertexFunction = vfn
         desc.fragmentFunction = ffn
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        // Composite can be transparent when Background Layer is hidden.
+        desc.colorAttachments[0].isBlendingEnabled = true
+        desc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        desc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        desc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        desc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
 
         guard let pipeline = try? device.makeRenderPipelineState(descriptor: desc) else {
             return nil

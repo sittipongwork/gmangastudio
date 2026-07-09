@@ -101,19 +101,21 @@ void SoftwareRenderer::compositeFromBelow(
 }
 
 bool SoftwareRenderer::selfCheck() {
-    PageSettings page{4, 4, {255, 255, 255, 255}};
+    // Page clear is transparent; white lives on Background Layer.
+    PageSettings page{4, 4, {0, 0, 0, 0}};
     LayerStack stack(4, 4);
+    // stack: [Layer 1, Background Layer] — paint red on a new back-of-paint layer slot
     const int32_t topId = stack.activeId();
     stack.add("Top");
     stack.setActive(topId);
-    Layer* back = stack.at(1);
-    if (!back) return false;
-    back->ensurePixels(4, 4);
-    for (size_t i = 0; i < back->pixels.size(); i += 4) {
-        back->pixels[i] = 255;
-        back->pixels[i + 1] = 0;
-        back->pixels[i + 2] = 0;
-        back->pixels[i + 3] = 255;
+    Layer* paint = stack.find(topId);
+    if (!paint) return false;
+    paint->ensurePixels(4, 4);
+    for (size_t i = 0; i < paint->pixels.size(); i += 4) {
+        paint->pixels[i] = 255;
+        paint->pixels[i + 1] = 0;
+        paint->pixels[i + 2] = 0;
+        paint->pixels[i + 3] = 255;
     }
     Layer* front = stack.at(0);
     if (!front) return false;
@@ -127,6 +129,7 @@ bool SoftwareRenderer::selfCheck() {
     std::vector<uint8_t> out;
     composite(page, stack, out);
     const uint8_t* c = &out[(2u * 4u + 2u) * 4u];
+    // Blue-over-red (or over white bg) must not stay pure red or pure white.
     if ((c[0] == 255 && c[1] == 0 && c[2] == 0) || (c[0] == 255 && c[1] == 255 && c[2] == 255)) {
         return false;
     }

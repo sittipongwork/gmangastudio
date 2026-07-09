@@ -10,4 +10,8 @@ final class gmangastudioTests: XCTestCase {
     func testAppActiveIdleTracker() throws {
         XCTAssertTrue(AppActiveIdleTrackerSelfCheck.run())
     }
+
+    func testFloatingWidgetPositionStore() throws {
+        XCTAssertTrue(FloatingWidgetPositionSelfCheck.run())
+    }
 }

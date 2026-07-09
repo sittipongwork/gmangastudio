@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <cstddef>
+#include <swift/bridging>
 
 namespace illus {
 
@@ -36,6 +37,9 @@ public:
     int32_t height() const;
 
     int32_t layerCount() const;
+    /// Index 0 = front (top of Layers panel).
+    int32_t layerIdAt(int32_t index) const;
+    const char* layerName(int32_t layerId) const SWIFT_RETURNS_INDEPENDENT_VALUE;
     int32_t addLayer(const char* name);
     bool removeLayer(int32_t layerId);
     bool setActiveLayer(int32_t layerId);
@@ -45,19 +49,23 @@ public:
     float layerOpacity(int32_t layerId) const;
     bool setLayerVisible(int32_t layerId, bool visible);
     bool layerVisible(int32_t layerId) const;
+    bool layerIsBackground(int32_t layerId) const;
     int32_t duplicateLayer(int32_t layerId);
     bool moveLayer(int32_t layerId, int32_t toIndex);
     bool mergeLayerDown(int32_t srcId, int32_t dstId);
     int32_t layerIndex(int32_t layerId) const;
+    /// Downsample layer to RGBA8 thumbnail. `outRGBA` must hold outW*outH*4 bytes.
+    bool copyLayerThumbnailRGBA(int32_t layerId, int32_t outW, int32_t outH, uint8_t* outRGBA, int32_t outByteCount) const;
 
     void setTool(ToolMode mode);
     ToolMode tool() const;
 
     int32_t brushSetCount() const;
-    const char* brushSetName(int32_t setIndex) const;
+    const char* brushSetName(int32_t setIndex) const SWIFT_RETURNS_INDEPENDENT_VALUE;
     int32_t brushPresetCount() const;
     int32_t brushPresetCountInSet(int32_t setIndex) const;
-    const char* brushPresetName(int32_t index) const;
+    const char* brushPresetName(int32_t index) const SWIFT_RETURNS_INDEPENDENT_VALUE;
+    const char* brushPresetNameInSet(int32_t setIndex, int32_t presetIndex) const SWIFT_RETURNS_INDEPENDENT_VALUE;
     bool setBrushPreset(int32_t index);
     bool setBrushPresetInSet(int32_t setIndex, int32_t presetIndex);
     int32_t activeBrushPresetIndex() const;
@@ -106,7 +114,7 @@ public:
     bool metalAvailable() const;
 
     static bool selfCheck();
-    static const char* version();
+    static const char* version() SWIFT_RETURNS_INDEPENDENT_VALUE;
 
 private:
     struct Impl;

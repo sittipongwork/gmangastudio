@@ -19,7 +19,8 @@ public:
 
     void resizeAll(int32_t width, int32_t height);
 
-    int32_t add(const char* name = "Layer");
+    /// Inserts at front (top of panel). Null/empty/"Layer" → auto-name `Layer N`.
+    int32_t add(const char* name = nullptr);
     bool remove(int32_t layerId);
     std::optional<int32_t> duplicate(int32_t layerId);
     bool move(int32_t layerId, int32_t toIndex); // 0 = front
@@ -47,6 +48,7 @@ public:
 
 private:
     int32_t nextId_ = 1;
+    int32_t nextPaintLayerNumber_ = 1;
     int32_t activeId_ = 0;
     int32_t width_ = 1;
     int32_t height_ = 1;

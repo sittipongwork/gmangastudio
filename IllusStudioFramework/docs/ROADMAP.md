@@ -35,6 +35,8 @@ Former **P0**.
 - [x] **T0-7** `CanvasEditor::selfCheck()` entry
 - [x] **T0-8** Layer opacity / visibility API on public `CanvasEditor` (internal stack exists)
 - [x] **T0-9** Layer reorder / duplicate / merge (v1 polish)
+- [x] **T0-10** Background Layer (locked back) + `Layer N` auto-name; page underlay transparent; white fill lives on Background Layer only ([layer.md](layer.md))
+- [x] **T0-11** `copyLayerThumbnailRGBA` (nearest downsample, document aspect) + self-check; DrawingEditor Layers panel thumbs refresh after paint / layer edits
 
 **v1 out:** layer groups, masks, full blend-mode catalog.
 
@@ -55,6 +57,7 @@ Former **P1** (tools) + [brush_drawing.md](brush_drawing.md). Vector source of t
 - [x] **T1-1-7** Public API: `setTool` / `setBrushPreset` / session getters-setters / `resetBrushSession` / optional `saveBrushSessionAsPreset`
 - [x] **T1-1-8** Apply `lineSmooth` as input filter before samples commit; snapshot session at `beginStroke`
 - [x] **T1-1-9** Self-check: paint/erase; lineWidth affects dab; mid-stroke session change ignored; stroke count += 1
+- [x] **T1-1-10** `ToolMode::Pointer` (no paint) + brush-set listing APIs for DrawingEditor Brush Library / sidebar
 
 ### T1-2 — Live overlay + dirty tiles (P1b)
 
@@ -194,6 +197,7 @@ Former **P5**.
 - [x] **T6-4** `CanvasMetalView` MTKView @ 120fps; shared device with engine
 - [x] **T6-5** Mutex on `CanvasEditor` for draw vs gesture
 - [x] **T6-6** CPU `SoftwareRenderer` kept for composite / self-check / fallback
+- [x] **T6-7** App active status (UI): `performance_mode` @ 120Hz vs `low_energy_mode` @ 10Hz continuous present; 60s idle ([canvas_document.md](canvas_document.md))
 
 **Ongoing (covered by T1-3 / T1-4):** compute raster + GPU layer blend on top of this present path.
 
@@ -206,6 +210,7 @@ Former **P5**.
 - [x] **TX-3** Lazy layer buffers (allocate on first paint; Clear frees)
 - [ ] **TX-4** SIMD / Accelerate only after profiler evidence
 - [ ] **TX-5** Sustain 120Hz under heavy layer stacks (verify after T1-3 / T1-4)
+- [x] **TX-6** DrawingEditor floating widgets (Brush Library + Layers): drag position, close, Layers reorder / visibility / doc-aspect thumbs
 
 ---
 

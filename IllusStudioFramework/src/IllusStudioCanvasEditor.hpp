@@ -61,6 +61,10 @@ public:
     /// Composite into CPU cache; pointer valid until next mutating call.
     const uint8_t* compositePixels();
 
+    /// Nearest-neighbor downsample of one layer into RGBA8 `out` (outW*outH*4).
+    /// Lazy/empty layer → transparent. Returns false if invalid args / missing layer.
+    bool copyLayerThumbnailRGBA(int32_t layerId, int32_t outW, int32_t outH, uint8_t* outRGBA, int32_t outByteCount) const;
+
     /// Flush composite, upload dirty region to Metal, return MTLTexture* (or null).
     void* presentMetalTexture();
     void* metalDevice() const { return metal_.deviceHandle(); }

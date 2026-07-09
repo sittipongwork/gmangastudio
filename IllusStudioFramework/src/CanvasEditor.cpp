@@ -53,6 +53,18 @@ int32_t CanvasEditor::layerCount() const {
     return impl_->editor.layers().count();
 }
 
+int32_t CanvasEditor::layerIdAt(int32_t index) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const Layer* layer = impl_->editor.layers().at(index);
+    return layer ? layer->id : -1;
+}
+
+const char* CanvasEditor::layerName(int32_t layerId) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const Layer* layer = impl_->editor.layers().find(layerId);
+    return layer ? layer->name.c_str() : "";
+}
+
 int32_t CanvasEditor::addLayer(const char* name) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.addLayer(name);
@@ -99,6 +111,12 @@ bool CanvasEditor::layerVisible(int32_t layerId) const {
     return impl_->editor.layers().visible(layerId);
 }
 
+bool CanvasEditor::layerIsBackground(int32_t layerId) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const Layer* layer = impl_->editor.layers().find(layerId);
+    return layer ? layer->isBackground : false;
+}
+
 int32_t CanvasEditor::duplicateLayer(int32_t layerId) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.duplicateLayer(layerId);
@@ -117,6 +135,17 @@ bool CanvasEditor::mergeLayerDown(int32_t srcId, int32_t dstId) {
 int32_t CanvasEditor::layerIndex(int32_t layerId) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.layers().indexOf(layerId);
+}
+
+bool CanvasEditor::copyLayerThumbnailRGBA(
+    int32_t layerId,
+    int32_t outW,
+    int32_t outH,
+    uint8_t* outRGBA,
+    int32_t outByteCount
+) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.copyLayerThumbnailRGBA(layerId, outW, outH, outRGBA, outByteCount);
 }
 
 void CanvasEditor::setTool(ToolMode mode) {
@@ -152,6 +181,11 @@ int32_t CanvasEditor::brushPresetCountInSet(int32_t setIndex) const {
 const char* CanvasEditor::brushPresetName(int32_t index) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.brushes().presetName(index);
+}
+
+const char* CanvasEditor::brushPresetNameInSet(int32_t setIndex, int32_t presetIndex) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.brushes().presetNameInSet(setIndex, presetIndex);
 }
 
 bool CanvasEditor::setBrushPreset(int32_t index) {

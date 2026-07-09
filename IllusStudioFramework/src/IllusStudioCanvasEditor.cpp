@@ -15,19 +15,27 @@
 namespace illus {
 
 IllusStudioCanvasEditor::IllusStudioCanvasEditor(int32_t width, int32_t height)
-    : page_{std::max(1, width), std::max(1, height), {255, 255, 255, 255}}
+    : page_{std::max(1, width), std::max(1, height), {0, 0, 0, 0}}
     , layers_(page_.width, page_.height)
 {
     const size_t n = static_cast<size_t>(page_.width) * static_cast<size_t>(page_.height) * 4u;
-    composite_.assign(n, 255);
-    belowCache_.assign(n, 255);
+    composite_.assign(n, 0);
+    belowCache_.assign(n, 0);
     uploadFull_ = true;
     metalReady_ = metal_.ensureSize(page_.width, page_.height);
     strokeListFor(layers_.activeId());
 }
 
 void IllusStudioCanvasEditor::setBackground(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    page_.background = {r, g, b, a};
+    // White (and any page fill) lives on Background Layer — page clear stays transparent.
+    page_.background = {0, 0, 0, 0};
+    for (int32_t i = layers_.count() - 1; i >= 0; --i) {
+        Layer* layer = layers_.at(i);
+        if (layer && layer->isBackground) {
+            layer->fillSolid(page_.width, page_.height, {r, g, b, a});
+            break;
+        }
+    }
     markDirty();
 }
 
@@ -82,10 +90,14 @@ void IllusStudioCanvasEditor::clearActiveLayer() {
 }
 
 void IllusStudioCanvasEditor::clearAll(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    page_.background = {r, g, b, a};
+    page_.background = {0, 0, 0, 0};
     for (int32_t i = 0; i < layers_.count(); ++i) {
         if (Layer* layer = layers_.at(i)) {
-            layer->clearTransparent();
+            if (layer->isBackground) {
+                layer->fillSolid(page_.width, page_.height, {r, g, b, a});
+            } else {
+                layer->clearTransparent();
+            }
             strokeListFor(layer->id).clear();
         }
     }
@@ -240,6 +252,44 @@ int32_t IllusStudioCanvasEditor::strokeCountOnLayer(int32_t layerId) const {
 const uint8_t* IllusStudioCanvasEditor::compositePixels() {
     flushDirtyComposite();
     return composite_.data();
+}
+
+bool IllusStudioCanvasEditor::copyLayerThumbnailRGBA(
+    int32_t layerId,
+    int32_t outW,
+    int32_t outH,
+    uint8_t* outRGBA,
+    int32_t outByteCount
+) const {
+    if (!outRGBA || outW < 1 || outH < 1) return false;
+    const int32_t need = outW * outH * 4;
+    if (outByteCount < need) return false;
+
+    const Layer* layer = layers_.find(layerId);
+    if (!layer) return false;
+
+    std::fill(outRGBA, outRGBA + need, static_cast<uint8_t>(0));
+    if (!layer->hasPixels()) return true;
+
+    const int32_t srcW = page_.width;
+    const int32_t srcH = page_.height;
+    const size_t srcBytes = static_cast<size_t>(srcW) * static_cast<size_t>(srcH) * 4u;
+    if (layer->pixels.size() != srcBytes) return true;
+
+    // Nearest-neighbor downsample (ponytail: good enough for ~40px thumbs).
+    for (int32_t y = 0; y < outH; ++y) {
+        const int32_t sy = std::min(srcH - 1, (y * srcH) / outH);
+        for (int32_t x = 0; x < outW; ++x) {
+            const int32_t sx = std::min(srcW - 1, (x * srcW) / outW);
+            const size_t si = (static_cast<size_t>(sy) * static_cast<size_t>(srcW) + static_cast<size_t>(sx)) * 4u;
+            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(outW) + static_cast<size_t>(x)) * 4u;
+            outRGBA[di] = layer->pixels[si];
+            outRGBA[di + 1] = layer->pixels[si + 1];
+            outRGBA[di + 2] = layer->pixels[si + 2];
+            outRGBA[di + 3] = layer->pixels[si + 3];
+        }
+    }
+    return true;
 }
 
 void* IllusStudioCanvasEditor::presentMetalTexture() {
@@ -398,6 +448,48 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (thick.strokeListFor(b->id).strokes[0].presetSnapshot.lineWidthPx < 30.f) return false;
     }
 
+    // New project seeds Background Layer + Layer 1; Add → Layer N at front.
+    // White is on Background Layer; hide it → transparent composite (not page white).
+    {
+        IllusStudioCanvasEditor e(8, 8);
+        if (e.layers().count() != 2) return false;
+        const Layer* front = e.layers().at(0);
+        const Layer* back = e.layers().at(1);
+        if (!front || !back) return false;
+        if (front->name != "Layer 1" || front->isBackground) return false;
+        if (back->name != "Background Layer" || !back->isBackground) return false;
+        if (!back->hasPixels()) return false;
+        if (e.layers().activeId() != front->id) return false;
+        if (e.layers().remove(back->id)) return false; // background locked
+
+        const uint8_t* white = e.compositePixels();
+        if (white[0] != 255 || white[1] != 255 || white[2] != 255 || white[3] != 255) return false;
+        if (!e.layers().setVisible(back->id, false)) return false;
+        e.markDirty();
+        const uint8_t* clear = e.compositePixels();
+        if (clear[3] != 0) return false; // page underlay is transparent
+        if (!e.layers().setVisible(back->id, true)) return false;
+
+        const int32_t id2 = e.addLayer(nullptr);
+        if (e.layers().count() != 3) return false;
+        const Layer* top = e.layers().at(0);
+        if (!top || top->id != id2 || top->name != "Layer 2") return false;
+    }
+
+    // Layer thumbnail downsample (white bg → opaque white pixel).
+    {
+        IllusStudioCanvasEditor e(40, 60);
+        const Layer* bg = e.layers().at(e.layers().count() - 1);
+        if (!bg || !bg->isBackground) return false;
+        uint8_t thumb[4 * 4 * 4];
+        if (!e.copyLayerThumbnailRGBA(bg->id, 4, 4, thumb, static_cast<int32_t>(sizeof(thumb)))) return false;
+        if (thumb[0] != 255 || thumb[1] != 255 || thumb[2] != 255 || thumb[3] != 255) return false;
+        const int32_t paintId = e.layers().activeId();
+        uint8_t empty[4 * 4 * 4];
+        if (!e.copyLayerThumbnailRGBA(paintId, 4, 4, empty, static_cast<int32_t>(sizeof(empty)))) return false;
+        if (empty[3] != 0) return false; // lazy paint layer → transparent
+    }
+
     // Layer opacity / visibility / reorder / duplicate / merge.
     {
         IllusStudioCanvasEditor e(16, 16);
@@ -413,7 +505,7 @@ bool IllusStudioCanvasEditor::selfCheck() {
 
         const int32_t dupId = e.duplicateLayer(backId);
         if (dupId < 0) return false;
-        if (e.layers().count() < 3) return false;
+        if (e.layers().count() < 4) return false;
         if (!e.moveLayer(dupId, 0)) return false;
         if (e.layers().indexOf(dupId) != 0) return false;
 
@@ -424,21 +516,23 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (e.strokeCountOnLayer(backId) < strokesBefore) return false;
     }
 
-    // Untouched back layer stays lazy.
+    // Untouched paint layer stays lazy; Background Layer keeps its fill.
     {
         IllusStudioCanvasEditor e2(16, 16);
-        const int32_t backId = e2.layers().activeId();
+        const int32_t paintId = e2.layers().activeId();
         e2.addLayer("Front");
         e2.layers().setActive(e2.layers().at(0)->id);
         e2.markDirty();
         e2.beginStroke(8, 8, 1);
         e2.endStroke();
-        const Layer* back = e2.layers().find(backId);
-        if (!back) return false;
-        if (back->hasPixels()
-            && !std::all_of(back->pixels.begin(), back->pixels.end(), [](uint8_t v) { return v == 0; })) {
+        const Layer* paint = e2.layers().find(paintId);
+        if (!paint || paint->isBackground) return false;
+        if (paint->hasPixels()
+            && !std::all_of(paint->pixels.begin(), paint->pixels.end(), [](uint8_t v) { return v == 0; })) {
             return false;
         }
+        const Layer* bg = e2.layers().at(e2.layers().count() - 1);
+        if (!bg || !bg->isBackground || !bg->hasPixels()) return false;
     }
 
     // Pointer tool does not paint.

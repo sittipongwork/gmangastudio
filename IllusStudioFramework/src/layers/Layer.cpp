@@ -25,6 +25,11 @@ void Layer::clearTransparent() {
     releasePixels();
 }
 
+void Layer::fillSolid(int32_t width, int32_t height, math::RGBA c) {
+    ensurePixels(width, height);
+    math::fillRGBA(pixels.data(), pixels.size() / 4u, c);
+}
+
 uint8_t* Layer::pixelAt(int32_t x, int32_t y, int32_t width) {
     return &pixels[(static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u];
 }

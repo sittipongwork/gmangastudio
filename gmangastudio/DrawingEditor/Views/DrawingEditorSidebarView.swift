@@ -7,39 +7,41 @@ import SwiftUI
 
 struct DrawingEditorSidebarView: View {
     var mode: DrawingEditorMode
+    var isBrushLibraryVisible: Bool = false
+    var isLayersVisible: Bool = false
     var onSelectMode: (DrawingEditorMode) -> Void
-    var onAddLayer: () -> Void = {}
+    var onToggleBrushLibrary: () -> Void = {}
+    var onToggleLayers: () -> Void = {}
 
     private let buttonSize: CGFloat = 46
 
     var body: some View {
         VStack(spacing: 8) {
             modeButton(mode: .pointer, systemImage: "cursorarrow", label: "Pointer")
-            modeButton(mode: .brushLibrary, systemImage: "paintbrush.pointed", label: "Brush Library")
-            modeButton(mode: .eraser, systemImage: "eraser", label: "Eraser")
+            brushLibraryButton
+            modeButton(mode: .eraser, systemImage: "eraser.fill", label: "Eraser")
 
-            Menu {
-                Button("Add Layer", action: onAddLayer)
-                Button("Delete Layer") {}
-                Button("Duplicate Layer") {}
+            Button {
+                onToggleLayers()
             } label: {
-                sidebarIcon(systemImage: "square.3.layers.3d", label: "Layer", selected: false)
+                sidebarIcon(
+                    systemImage: "square.2.layers.3d.fill",
+                    label: "Layer",
+                    selected: isLayersVisible
+                )
             }
-            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
             .frame(width: buttonSize, height: buttonSize)
+            .accessibilityLabel("Layer")
 
-            Menu {
+            menuButton(systemImage: "plus.app.fill", label: "Edit") {
                 Button("Undo") {}
                 Button("Redo") {}
                 Divider()
                 Button("Cut") {}
                 Button("Copy") {}
                 Button("Paste") {}
-            } label: {
-                sidebarIcon(systemImage: "slider.horizontal.3", label: "Edit", selected: false)
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: buttonSize, height: buttonSize)
 
             Spacer(minLength: 0)
         }
@@ -49,6 +51,21 @@ struct DrawingEditorSidebarView: View {
         .background(Color.black)
     }
 
+    private var brushLibraryButton: some View {
+        Button {
+            onToggleBrushLibrary()
+        } label: {
+            sidebarIcon(
+                systemImage: "paintbrush.pointed.fill",
+                label: "Brush Library",
+                selected: mode == .brushLibrary || isBrushLibraryVisible
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(width: buttonSize, height: buttonSize)
+        .accessibilityLabel("Brush Library")
+    }
+
     private func modeButton(mode: DrawingEditorMode, systemImage: String, label: String) -> some View {
         Button {
             onSelectMode(mode)
@@ -56,6 +73,23 @@ struct DrawingEditorSidebarView: View {
             sidebarIcon(systemImage: systemImage, label: label, selected: self.mode == mode)
         }
         .buttonStyle(.plain)
+        .frame(width: buttonSize, height: buttonSize)
+        .accessibilityLabel(label)
+    }
+
+    private func menuButton<Content: View>(
+        systemImage: String,
+        label: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Menu {
+            content()
+        } label: {
+            sidebarIcon(systemImage: systemImage, label: label, selected: false)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .frame(width: buttonSize, height: buttonSize)
         .accessibilityLabel(label)
     }

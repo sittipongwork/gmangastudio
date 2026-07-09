@@ -6,6 +6,14 @@
 import Foundation
 import IllusStudioFramework
 import Observation
+import CoreGraphics
+import SwiftUI
+
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 @Observable
 final class DrawingEditorViewModel {
@@ -16,6 +24,16 @@ final class DrawingEditorViewModel {
     private(set) var editor: illus.CanvasEditor
     private(set) var zoomPercent: Int = 100
     private(set) var appActiveStatus: AppActiveStatus = .performanceMode
+    private(set) var isBrushLibraryVisible = false
+    private(set) var isLayersVisible = false
+    private(set) var brushSets: [BrushLibrarySetItem] = []
+    private(set) var brushPresets: [BrushLibraryPresetItem] = []
+    private(set) var selectedBrushSetIndex: Int32 = 0
+    private(set) var selectedBrushPresetIndex: Int32 = 0
+    private(set) var layers: [LayerListItem] = []
+    private(set) var activeLayerId: Int32 = 0
+    /// Bumps when active layer pixels change (stroke / clear) so thumbs refresh.
+    private var layerContentRevision: [Int32: Int] = [:]
 
     private var isStroking = false
     private var idle = AppActiveIdleTracker()
@@ -31,6 +49,7 @@ final class DrawingEditorViewModel {
         canvasHeight = height
 
         assert(AppActiveIdleTrackerSelfCheck.run(), "AppActiveIdleTracker self-check failed")
+        assert(FloatingWidgetPositionSelfCheck.run(), "FloatingWidgetPosition self-check failed")
 
         let check = illus.CanvasEditor.selfCheck()
         selfCheckPassed = check
@@ -40,10 +59,13 @@ final class DrawingEditorViewModel {
         var ed = illus.CanvasEditor(width, height)
         ed.setTool(.Brush)
         layerCount = ed.layerCount()
+        activeLayerId = ed.activeLayerId()
         _ = ed.presentMetalTextureAddress()
         metalAvailable = ed.metalAvailable()
         editor = ed
         syncZoomLabel()
+        reloadBrushLibrary()
+        reloadLayers()
         scheduleIdleCheck()
     }
 
@@ -67,6 +89,11 @@ final class DrawingEditorViewModel {
             editor = ed
         }
         self.mode = mode
+        if mode == .brushLibrary {
+            isBrushLibraryVisible = true
+        } else {
+            isBrushLibraryVisible = false
+        }
         var ed = editor
         switch mode {
         case .pointer: ed.setTool(.Pointer)
@@ -76,19 +103,145 @@ final class DrawingEditorViewModel {
         editor = ed
     }
 
+    func toggleBrushLibrary() {
+        noteUserActivity()
+        if isBrushLibraryVisible {
+            isBrushLibraryVisible = false
+            return
+        }
+        isLayersVisible = false
+        setMode(.brushLibrary)
+    }
+
+    func toggleLayers() {
+        noteUserActivity()
+        isLayersVisible.toggle()
+        if isLayersVisible {
+            isBrushLibraryVisible = false
+            reloadLayers()
+        }
+    }
+
+    func selectBrushSet(_ setIndex: Int32) {
+        noteUserActivity()
+        selectedBrushSetIndex = setIndex
+        reloadBrushPresets()
+        if let first = brushPresets.first {
+            selectBrushPreset(first.id)
+        }
+    }
+
+    func selectBrushPreset(_ presetIndexInSet: Int32) {
+        noteUserActivity()
+        selectedBrushPresetIndex = presetIndexInSet
+        var ed = editor
+        _ = ed.setBrushPresetInSet(selectedBrushSetIndex, presetIndexInSet)
+        ed.setTool(.Brush)
+        editor = ed
+        mode = .brushLibrary
+    }
+
     func clear() {
         noteUserActivity()
         var ed = editor
         ed.clearAll(255, 255, 255, 255)
         editor = ed
+        bumpAllLayerContent()
+        reloadLayers()
     }
 
     func addLayer() {
         noteUserActivity()
         var ed = editor
-        _ = ed.addLayer("Layer")
+        // Engine auto-names `Layer N` and inserts at front (top of list).
+        let id = ed.addLayer(nil)
         layerCount = ed.layerCount()
+        activeLayerId = ed.activeLayerId()
         editor = ed
+        if id >= 0 { bumpLayerContent(id) }
+        reloadLayers()
+    }
+
+    func selectLayer(_ layerId: Int32) {
+        noteUserActivity()
+        guard layerId >= 0 else { return }
+        var ed = editor
+        if ed.setActiveLayer(layerId) {
+            activeLayerId = layerId
+            editor = ed
+            reloadLayers()
+        }
+    }
+
+    /// Reorder paint layers (Background stays last). Indices are within the paint-only list.
+    func reorderPaintLayers(from source: IndexSet, to destination: Int) {
+        noteUserActivity()
+        var paintIds = layers.filter { !$0.isBackground }.map(\.id)
+        guard let fromIndex = source.first, fromIndex < paintIds.count else { return }
+        let id = paintIds.remove(at: fromIndex)
+        let insertAt = destination > fromIndex ? destination - 1 : destination
+        let clamped = min(max(0, insertAt), paintIds.count)
+        paintIds.insert(id, at: clamped)
+        guard let toIndex = paintIds.firstIndex(of: id) else { return }
+        var ed = editor
+        if ed.moveLayer(id, Int32(toIndex)) {
+            editor = ed
+            reloadLayers()
+        }
+    }
+
+    func toggleLayerVisible(_ layerId: Int32) {
+        noteUserActivity()
+        guard layerId >= 0 else { return }
+        var ed = editor
+        let next = !ed.layerVisible(layerId)
+        if ed.setLayerVisible(layerId, next) {
+            editor = ed
+            reloadLayers()
+        }
+    }
+
+    func clearLayer(_ layerId: Int32) {
+        noteUserActivity()
+        guard layerId >= 0 else { return }
+        var ed = editor
+        let prev = ed.activeLayerId()
+        _ = ed.setActiveLayer(layerId)
+        ed.clearActiveLayer()
+        _ = ed.setActiveLayer(prev)
+        activeLayerId = ed.activeLayerId()
+        editor = ed
+        bumpLayerContent(layerId)
+        reloadLayers()
+    }
+
+    func duplicateLayer(_ layerId: Int32) {
+        noteUserActivity()
+        guard layerId >= 0 else { return }
+        var ed = editor
+        let newId = ed.duplicateLayer(layerId)
+        if newId >= 0 {
+            activeLayerId = newId
+            layerCount = ed.layerCount()
+            editor = ed
+            bumpLayerContent(newId)
+            reloadLayers()
+        }
+    }
+
+    func mergeLayerDown(_ layerId: Int32) {
+        noteUserActivity()
+        guard layerId >= 0 else { return }
+        var ed = editor
+        let idx = ed.layerIndex(layerId)
+        guard idx >= 0, idx + 1 < ed.layerCount() else { return }
+        let belowId = ed.layerIdAt(idx + 1)
+        guard belowId >= 0, ed.mergeLayerDown(layerId, belowId) else { return }
+        layerCount = ed.layerCount()
+        activeLayerId = ed.activeLayerId()
+        editor = ed
+        bumpLayerContent(belowId)
+        reloadLayers()
     }
 
     func resetViewport() {
@@ -166,10 +319,136 @@ final class DrawingEditorViewModel {
         var ed = editor
         ed.endStroke()
         editor = ed
+        bumpLayerContent(activeLayerId)
+        reloadLayers()
     }
 
     private func syncZoomLabel() {
         zoomPercent = Int((editor.viewportScale() * 100).rounded())
+    }
+
+    private func reloadBrushLibrary() {
+        let ed = editor
+        let setCount = ed.brushSetCount()
+        var sets: [BrushLibrarySetItem] = []
+        for i in 0..<setCount {
+            let name = String(cString: ed.brushSetName(i))
+            sets.append(.init(id: i, name: name.isEmpty ? "Set \(i)" : name, systemImage: iconForBrushSet(name)))
+        }
+        brushSets = sets
+        if selectedBrushSetIndex >= setCount {
+            selectedBrushSetIndex = 0
+        }
+        reloadBrushPresets()
+    }
+
+    private func reloadBrushPresets() {
+        let ed = editor
+        let count = ed.brushPresetCountInSet(selectedBrushSetIndex)
+        var items: [BrushLibraryPresetItem] = []
+        for i in 0..<count {
+            let name = String(cString: ed.brushPresetNameInSet(selectedBrushSetIndex, i))
+            // ponytail: stroke weight from name heuristics until preset preview API exists
+            let weight: CGFloat = name.contains("air") || name.contains("soft") ? 8 : 4
+            items.append(.init(id: i, name: name.isEmpty ? "Brush \(i)" : name, strokeWeight: weight))
+        }
+        brushPresets = items
+        if selectedBrushPresetIndex >= count {
+            selectedBrushPresetIndex = 0
+        }
+    }
+
+    private func iconForBrushSet(_ name: String) -> String {
+        let n = name.lowercased()
+        if n.contains("ink") { return "pencil.tip" }
+        if n.contains("air") { return "cloud" }
+        if n.contains("erase") { return "eraser" }
+        return "paintbrush.pointed"
+    }
+
+    private func reloadLayers() {
+        let ed = editor
+        let count = ed.layerCount()
+        var items: [LayerListItem] = []
+        // Index 0 = front (top of panel).
+        for i in 0..<count {
+            let id = ed.layerIdAt(i)
+            guard id >= 0 else { continue }
+            let name = String(cString: ed.layerName(id))
+            let rev = layerContentRevision[id] ?? 0
+            items.append(.init(
+                id: id,
+                name: name.isEmpty ? "Layer \(id)" : name,
+                visible: ed.layerVisible(id),
+                isBackground: ed.layerIsBackground(id),
+                contentRevision: rev,
+                thumbnail: makeLayerThumbnail(editor: ed, layerId: id)
+            ))
+        }
+        layers = items
+        activeLayerId = ed.activeLayerId()
+        layerCount = count
+    }
+
+    private func bumpLayerContent(_ layerId: Int32) {
+        layerContentRevision[layerId, default: 0] += 1
+    }
+
+    private func bumpAllLayerContent() {
+        for id in layers.map(\.id) {
+            bumpLayerContent(id)
+        }
+    }
+
+    /// Document-aspect thumb (~36px long edge).
+    private func makeLayerThumbnail(editor ed: illus.CanvasEditor, layerId: Int32) -> Image? {
+        let docW = max(1, canvasWidth)
+        let docH = max(1, canvasHeight)
+        let maxSide: Int32 = 36
+        let outW: Int32
+        let outH: Int32
+        if docW >= docH {
+            outW = maxSide
+            outH = max(1, (maxSide * docH + docW / 2) / docW)
+        } else {
+            outH = maxSide
+            outW = max(1, (maxSide * docW + docH / 2) / docH)
+        }
+        let byteCount = Int(outW * outH * 4)
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        let ok = bytes.withUnsafeMutableBufferPointer { buf in
+            ed.copyLayerThumbnailRGBA(layerId, outW, outH, buf.baseAddress, Int32(byteCount))
+        }
+        guard ok else { return nil }
+
+#if os(macOS)
+        guard let cgImage = Self.cgImageRGBA(bytes: bytes, width: Int(outW), height: Int(outH)) else { return nil }
+        let ns = NSImage(cgImage: cgImage, size: NSSize(width: Int(outW), height: Int(outH)))
+        return Image(nsImage: ns)
+#else
+        guard let cgImage = Self.cgImageRGBA(bytes: bytes, width: Int(outW), height: Int(outH)) else { return nil }
+        let ui = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+        return Image(uiImage: ui)
+#endif
+    }
+
+    private static func cgImageRGBA(bytes: [UInt8], width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0, bytes.count >= width * height * 4 else { return nil }
+        let data = Data(bytes)
+        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
     }
 
     private func scheduleIdleCheck() {
