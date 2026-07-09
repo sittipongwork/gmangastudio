@@ -1,6 +1,10 @@
 //
 //  IllusStudioFramework.h
-//  IllusStudioFramework — umbrella (public C API for Swift)
+//  IllusStudioFramework — umbrella (C++ API for Swift–C++ interop)
 //
 
-#include <IllusStudioFramework/ISCanvas.h>
+#pragma once
+
+#ifdef __cplusplus
+#include "CanvasEditor.hpp"
+#endif

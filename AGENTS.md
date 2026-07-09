@@ -15,14 +15,23 @@ gmangastudio/                    App sources (SwiftUI) — UI layer
     ViewModels/DrawingEditorViewModel.swift
   <PageName>/                    One folder per page / feature (page COP)
     Views/  ViewModels/  Models/
-IllusStudioFramework/            Core canvas engine (C++) + C bridge — separate framework target
-  README.md                      IllusStudioCanvasEditor architecture plan (read before engine work)
-  IllusStudioFramework.h         Umbrella header
-  ISCanvas.h                     Public C API (Swift-importable)
+IllusStudioFramework/            Core canvas engine (C++) — separate framework target
+  README.md                      Architecture (read before engine work)
+  docs/ROADMAP.md                Tasks & status (T0…T6) — single checklist
+  docs/canvas_document.md        Page setting, zoom/pan, export
+  docs/layer.md                  Layer management
+  docs/brush_drawing.md          Hybrid brush / vector design + image import
+  docs/history.md                Undo / redo / timelapse
+  docs/animation_timeline.md     Animation & timeline
+  IllusStudioFramework.h         Umbrella (C++)
+  CanvasEditor.hpp               Public C++ API (Swift–C++ interop)
   module.modulemap
   src/
-    CanvasEngine.hpp/.cpp        Private C++ engine
-    ISCanvas.cpp                 Bridge implementation
+    CanvasEditor.cpp             Public API impl (pimpl)
+    IllusStudioCanvasEditor.*    Internal facade
+    document/ layers/ render/ math/
+    render/MetalRenderer.*       Metal present texture (T6)
+  third_party/metal-cpp/         Apple metal-cpp headers
 gmangastudioTests/               Unit tests (mirror page folders when useful)
 gmangastudioUITests/             UI tests
 gmangastudio.xcodeproj/          Xcode project
@@ -70,44 +79,44 @@ gmangastudio/
 
 ## UI ↔ Framework flow
 
-Canvas work is split across three layers. UI never talks to C++ directly; it goes through the bridge.
+Swift UI talks to the public C++ API via Swift–C++ interop. No C bridge.
 
 ```text
 +-------------------------------------------------------+
 |                 UI Layer (Swift / SwiftUI)            |  <-- Xcode Managed
 +-------------------------------------------------------+
                            │ ▲
-                           ▼ │  (Swift-C++ Interop / Unsafe FFI)
+                           ▼ │  (Swift–C++ interop)
 +-------------------------------------------------------+
-|                 Bridge Layer (C API / Obj-C++)        |
+|          Public C++ API (`illus::CanvasEditor`)       |
 +-------------------------------------------------------+
                            │ ▲
                            ▼ │
 +-------------------------------------------------------+
-|          Core Canvas Engine (C++)                     |  <-- Separate Library/Framework
+|     IllusStudioCanvasEditor / Core (C++)              |  <-- This framework
 +-------------------------------------------------------+
 ```
 
 | Layer | Owns | Does not own |
 |-------|------|--------------|
-| **UI** (Swift / SwiftUI) | Page COPs, ViewModels, windowing, input capture, displaying frames/textures from the engine | Stroke math, layer compositing, document persistence internals |
-| **Bridge** (C API / Obj-C++) | Stable FFI surface, type marshaling, lifetime of engine handles, thread handoff into/out of Swift | SwiftUI views, engine algorithms |
-| **Core Canvas Engine** (C++) | Drawing, layers, tools, document model, render buffer — shipped as a separate library/framework | App chrome, navigation, platform UI |
+| **UI** (Swift / SwiftUI) | Page COPs, ViewModels, windowing, input, MTKView present | Stroke math, layer compositing |
+| **Public C++ API** | `CanvasEditor.hpp` — stable surface for Swift | Internal headers under `src/` |
+| **Core** (C++) | Document, layers, tools, render, Metal upload | App chrome |
 
 **Flow rules**
 
-- UI → Bridge → Engine for commands (pointer events, tool changes, undo, export requests)
-- Engine → Bridge → UI for results (dirty rects, preview buffers, status/errors)
-- Prefer a small C API on the bridge; keep Obj-C++ only where Apple types need wrapping
-- Engine stays buildable/testable as its own target; UI depends on the bridge, not on engine headers
+- UI → `illus::CanvasEditor` → internal engine
+- Keep `CanvasEditor.hpp` small and Swift-importable (avoid `void*`; use `uintptr_t` for Metal handles)
 - Put new canvas logic in the engine; put new screens in page COPs
+- App target uses `SWIFT_OBJC_INTEROP_MODE = objcxx`
 
 ## Stack
 
 - SwiftUI + Swift (UI layer, Xcode-managed app target)
-- **IllusStudioFramework** — C++ canvas engine + C bridge (`import IllusStudioFramework`); architecture: [IllusStudioFramework/README.md](IllusStudioFramework/README.md)
+- **IllusStudioFramework** — C++ engine + `CanvasEditor` (`import IllusStudioFramework`); architecture: [IllusStudioFramework/README.md](IllusStudioFramework/README.md); tasks: [IllusStudioFramework/docs/ROADMAP.md](IllusStudioFramework/docs/ROADMAP.md)
 - Xcode / Apple SDKs (no package manager unless one is added later)
 - Design and test for **Mac** and **iPad** first (pointer/trackpad, large canvas, split views)
+- Drawing present path targets **120fps** on high-refresh displays (do not throttle below 1/120 s)
 - Deployment targets follow the Xcode project settings
 
 ## Conventions

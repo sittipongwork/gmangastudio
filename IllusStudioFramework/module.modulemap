@@ -1,4 +1,5 @@
 framework module IllusStudioFramework {
+    requires cplusplus
     umbrella header "IllusStudioFramework.h"
     export *
     module * { export * }

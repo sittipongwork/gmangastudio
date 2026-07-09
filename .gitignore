@@ -1,6 +1,9 @@
 # Xcode
 build/
 DerivedData/
+
+# metal-cpp zip leftovers
+*.zip
 *.xcuserstate
 *.xcuserdata/
 xcuserdata/

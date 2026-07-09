@@ -3,90 +3,69 @@
 //  gmangastudio
 //
 
-import CoreGraphics
 import Foundation
 import IllusStudioFramework
 import Observation
 
 @Observable
 final class DrawingEditorViewModel {
-    private(set) var canvasImage: CGImage?
-    private(set) var engineVersion: String = ""
-    private(set) var selfCheckPassed: Bool = false
+    private(set) var engineVersion: String
+    private(set) var selfCheckPassed: Bool
+    private(set) var layerCount: Int32
+    private(set) var metalAvailable: Bool
+    private(set) var editor: illus.CanvasEditor
 
-    private var canvas: OpaquePointer?
     private var isStroking = false
-    private let canvasWidth: Int32 = 1920
-    private let canvasHeight: Int32 = 1080
+    let canvasWidth: Int32
+    let canvasHeight: Int32
 
     init() {
-        engineVersion = String(cString: ISCanvasGetVersion())
-        selfCheckPassed = ISCanvasSelfCheck() == 1
-        assert(selfCheckPassed, "IllusStudioFramework self-check failed")
+        let width: Int32 = 1920
+        let height: Int32 = 1080
+        canvasWidth = width
+        canvasHeight = height
 
-        canvas = ISCanvasCreate(canvasWidth, canvasHeight)
-        refreshImage()
-    }
+        let check = illus.CanvasEditor.selfCheck()
+        selfCheckPassed = check
+        engineVersion = String(cString: illus.CanvasEditor.version())
+        assert(check, "IllusStudioFramework self-check failed")
 
-    deinit {
-        if let canvas {
-            ISCanvasDestroy(canvas)
-        }
+        var ed = illus.CanvasEditor(width, height)
+        layerCount = ed.layerCount()
+        _ = ed.presentMetalTextureAddress()
+        metalAvailable = ed.metalAvailable()
+        editor = ed
     }
 
     func clear() {
-        guard let canvas else { return }
-        ISCanvasClear(canvas, 255, 255, 255, 255)
-        refreshImage()
+        var ed = editor
+        ed.clearAll(255, 255, 255, 255)
+        editor = ed
+    }
+
+    func addLayer() {
+        var ed = editor
+        _ = ed.addLayer("Layer")
+        layerCount = ed.layerCount()
+        editor = ed
     }
 
     func pointerChanged(at point: CGPoint) {
-        guard let canvas else { return }
+        var ed = editor
         if isStroking {
-            ISCanvasContinueStroke(canvas, Float(point.x), Float(point.y), 1)
+            ed.continueStroke(Float(point.x), Float(point.y), 1)
         } else {
             isStroking = true
-            ISCanvasBeginStroke(canvas, Float(point.x), Float(point.y), 1)
+            ed.beginStroke(Float(point.x), Float(point.y), 1)
         }
-        refreshImage()
+        editor = ed
     }
 
     func pointerEnded() {
-        guard let canvas, isStroking else { return }
+        guard isStroking else { return }
         isStroking = false
-        ISCanvasEndStroke(canvas)
-        refreshImage()
-    }
-
-    private func refreshImage() {
-        guard let canvas,
-              let pixels = ISCanvasGetPixels(canvas) else {
-            canvasImage = nil
-            return
-        }
-
-        let width = Int(ISCanvasGetWidth(canvas))
-        let height = Int(ISCanvasGetHeight(canvas))
-        let bytesPerRow = width * 4
-        let data = Data(bytes: pixels, count: height * bytesPerRow)
-
-        guard let provider = CGDataProvider(data: data as CFData) else {
-            canvasImage = nil
-            return
-        }
-
-        canvasImage = CGImage(
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: false,
-            intent: .defaultIntent
-        )
+        var ed = editor
+        ed.endStroke()
+        editor = ed
     }
 }

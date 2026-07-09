@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		A10000082FFF74E900E36EDE /* IllusStudioFramework.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000012FFF74E900E36EDE /* IllusStudioFramework.framework */; };
 		A10000092FFF74E900E36EDE /* IllusStudioFramework.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000012FFF74E900E36EDE /* IllusStudioFramework.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000202FFF74E900E36EDE /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000212FFF74E900E36EDE /* Metal.framework */; };
+		A10000222FFF74E900E36EDE /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000232FFF74E900E36EDE /* Foundation.framework */; };
+		A10000242FFF74E900E36EDE /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000252FFF74E900E36EDE /* QuartzCore.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,14 +57,20 @@
 		33B442F42FFF74E900E36EDE /* gmangastudioTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = gmangastudioTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		33B442FE2FFF74E900E36EDE /* gmangastudioUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = gmangastudioUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000012FFF74E900E36EDE /* IllusStudioFramework.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = IllusStudioFramework.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000212FFF74E900E36EDE /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		A10000232FFF74E900E36EDE /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		A10000252FFF74E900E36EDE /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		A10000102FFF74E900E36EDE /* Exceptions for "IllusStudioFramework" folder in "IllusStudioFramework" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				README.md,
+			);
 			publicHeaders = (
+				CanvasEditor.hpp,
 				IllusStudioFramework.h,
-				ISCanvas.h,
 			);
 			target = A10000072FFF74E900E36EDE /* IllusStudioFramework */;
 		};
@@ -120,6 +129,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000202FFF74E900E36EDE /* Metal.framework in Frameworks */,
+				A10000222FFF74E900E36EDE /* Foundation.framework in Frameworks */,
+				A10000242FFF74E900E36EDE /* QuartzCore.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +146,7 @@
 				33B442F72FFF74E900E36EDE /* gmangastudioTests */,
 				33B443012FFF74E900E36EDE /* gmangastudioUITests */,
 				33B442E82FFF74E700E36EDE /* Products */,
+				33B445AB2FFF817B00E36EDE /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -146,6 +159,16 @@
 				33B442FE2FFF74E900E36EDE /* gmangastudioUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		33B445AB2FFF817B00E36EDE /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				A10000212FFF74E900E36EDE /* Metal.framework */,
+				A10000232FFF74E900E36EDE /* Foundation.framework */,
+				A10000252FFF74E900E36EDE /* QuartzCore.framework */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -539,6 +562,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_INTEROP_MODE = objcxx;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;
@@ -586,6 +610,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_INTEROP_MODE = objcxx;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;
@@ -709,6 +734,11 @@
 				DYLIB_CURRENT_VERSION = 1;
 				DYLIB_INSTALL_NAME_BASE = "@rpath";
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/IllusStudioFramework/src",
+					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
@@ -752,6 +782,11 @@
 				DYLIB_CURRENT_VERSION = 1;
 				DYLIB_INSTALL_NAME_BASE = "@rpath";
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/IllusStudioFramework/src",
+					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
