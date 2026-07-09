@@ -35,6 +35,7 @@ struct DrawingEditorView: View {
                             canvasWidth: viewModel.canvasWidth,
                             canvasHeight: viewModel.canvasHeight,
                             highPerformancePresent: viewModel.appActiveStatus == .performanceMode,
+                            presentFps: viewModel.presentFps,
                             onDragChanged: { viewModel.pointerChanged(at: $0) },
                             onDragEnded: { viewModel.pointerEnded() },
                             onPan: { delta, size in viewModel.panBy(delta, viewSize: size) },

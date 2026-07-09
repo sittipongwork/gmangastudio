@@ -134,6 +134,8 @@ Spec: [canvas_document.md](canvas_document.md) § Zoom & pan
 | API | Returns | Notes |
 |-----|---------|-------|
 | `presentMetalTextureAddress()` | `uintptr_t` | Borrowed `MTLTexture*`; `0` if unavailable |
+| `setTargetPresentFps(fps)` | `void` | Cap GPU composite rebuilds to this Hz (`0` = uncapped); UI sends user pick |
+| `targetPresentFps()` | `int32_t` | Current present-FPS cap |
 | `metalDeviceAddress()` | `uintptr_t` | Borrowed `MTLDevice*` — use for `MTKView` |
 | `metalAvailable()` | `bool` | |
 

@@ -72,9 +72,9 @@ final class CanvasMetalRenderer: NSObject, MTKViewDelegate {
         desc.vertexFunction = vfn
         desc.fragmentFunction = ffn
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        // Composite can be transparent when Background Layer is hidden.
+        // Engine present texture is premultiplied (LayerCompositor).
         desc.colorAttachments[0].isBlendingEnabled = true
-        desc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        desc.colorAttachments[0].sourceRGBBlendFactor = .one
         desc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
         desc.colorAttachments[0].sourceAlphaBlendFactor = .one
         desc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
@@ -161,6 +161,7 @@ struct CanvasMetalView: NSViewRepresentable {
     let canvasWidth: Int32
     let canvasHeight: Int32
     var highPerformancePresent: Bool = true
+    var presentFps: Int = 72
     var onDragChanged: (CGPoint) -> Void
     var onDragEnded: () -> Void
     var onPan: (CGSize, CGSize) -> Void
@@ -195,8 +196,8 @@ struct CanvasMetalView: NSViewRepresentable {
     private func applyPresentMode(to view: MTKView) {
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        // performance_mode: 120Hz; low_energy_mode: low refresh to cut GPU/CPU.
-        view.preferredFramesPerSecond = highPerformancePresent ? 120 : 10
+        // performance_mode: app-recommended divisor of panel Hz; low_energy: low refresh.
+        view.preferredFramesPerSecond = highPerformancePresent ? presentFps : 10
     }
 
     final class Coordinator: NSObject {
@@ -318,6 +319,7 @@ struct CanvasMetalView: UIViewRepresentable {
     let canvasWidth: Int32
     let canvasHeight: Int32
     var highPerformancePresent: Bool = true
+    var presentFps: Int = 72
     var onDragChanged: (CGPoint) -> Void
     var onDragEnded: () -> Void
     var onPan: (CGSize, CGSize) -> Void
@@ -348,8 +350,8 @@ struct CanvasMetalView: UIViewRepresentable {
     private func applyPresentMode(to view: MTKView) {
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        // performance_mode: 120Hz; low_energy_mode: low refresh to cut GPU/CPU.
-        view.preferredFramesPerSecond = highPerformancePresent ? 120 : 10
+        // performance_mode: app-recommended divisor of panel Hz; low_energy: low refresh.
+        view.preferredFramesPerSecond = highPerformancePresent ? presentFps : 10
     }
 
     final class Coordinator: NSObject {

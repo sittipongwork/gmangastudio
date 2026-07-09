@@ -133,6 +133,10 @@ public:
     std::uintptr_t metalDeviceAddress() const;
     bool metalAvailable() const;
 
+    /// Cap GPU composite rebuilds to this Hz (UI present rate). 0 = uncapped.
+    void setTargetPresentFps(int32_t fps);
+    int32_t targetPresentFps() const;
+
     static bool selfCheck();
     static const char* version() SWIFT_RETURNS_INDEPENDENT_VALUE;
 

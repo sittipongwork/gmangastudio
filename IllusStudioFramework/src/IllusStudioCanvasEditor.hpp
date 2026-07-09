@@ -15,6 +15,7 @@
 #include "tools/BrushLibrary.hpp"
 #include "viewport/Viewport.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -70,6 +71,10 @@ public:
     void* presentMetalTexture();
     void* metalDevice() const { return metal_.deviceHandle(); }
     bool metalAvailable() const { return metalReady_; }
+
+    /// Cap GPU composite rebuilds to this Hz. 0 = uncapped. UI sets from user pick.
+    void setTargetPresentFps(int32_t fps);
+    int32_t targetPresentFps() const { return targetPresentFps_; }
 
     int32_t width() const { return page_.width; }
     int32_t height() const { return page_.height; }
@@ -128,6 +133,10 @@ private:
     LayerCompositor gpu_;
     bool metalReady_ = false;
     bool gpuCompositeReady_ = false;
+
+    int32_t targetPresentFps_ = 120;
+    std::chrono::steady_clock::time_point lastPresentRebuild_{};
+    bool haveLastPresentRebuild_ = false;
 };
 
 } // namespace illus

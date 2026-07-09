@@ -24,6 +24,8 @@ final class DrawingEditorViewModel {
     private(set) var editor: illus.CanvasEditor
     private(set) var zoomPercent: Int = 100
     private(set) var appActiveStatus: AppActiveStatus = .performanceMode
+    /// App-recommended present rate (120 if exact, else 72).
+    private(set) var presentFps: Int = 72
     private(set) var isBrushLibraryVisible = false
     private(set) var isLayersVisible = false
     private(set) var brushSets: [BrushLibrarySetItem] = []
@@ -57,13 +59,19 @@ final class DrawingEditorViewModel {
         engineVersion = String(cString: illus.CanvasEditor.version())
         assert(check, "IllusStudioFramework self-check failed")
 
+        let fps = Self.recommendedPresentFps()
+        // Drop leftover key from removed FPS persist.
+        UserDefaults.standard.removeObject(forKey: "drawingEditor.presentFps")
+
         var ed = illus.CanvasEditor(width, height)
         ed.setTool(.Brush)
+        ed.setTargetPresentFps(Int32(fps))
         layerCount = ed.layerCount()
         activeLayerId = ed.activeLayerId()
         _ = ed.presentMetalTextureAddress()
         metalAvailable = ed.metalAvailable()
         editor = ed
+        presentFps = fps
         syncZoomLabel()
         reloadBrushLibrary()
         reloadLayers()
@@ -359,6 +367,17 @@ final class DrawingEditorViewModel {
 
     private func syncZoomLabel() {
         zoomPercent = Int((editor.viewportScale() * 100).rounded())
+    }
+
+    /// 120 when the panel can run it exactly; else 72 (144Hz divisor; avoids 60→48).
+    private static func recommendedPresentFps() -> Int {
+        #if os(macOS)
+        let panelMax = NSScreen.main?.maximumFramesPerSecond ?? 60
+        #else
+        let panelMax = UIScreen.main.maximumFramesPerSecond
+        #endif
+        let hz = panelMax > 0 ? panelMax : 60
+        return (hz >= 120 && hz % 120 == 0) ? 120 : 72
     }
 
     private func reloadBrushLibrary() {

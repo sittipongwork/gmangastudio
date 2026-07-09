@@ -93,9 +93,10 @@ fragment float4 compositeFragment(
     sampler samp [[sampler(0)]],
     constant CompositeUniforms& u [[buffer(0)]]
 ) {
+    // Layer textures are straight alpha; pipeline blends premultiplied.
     float4 c = src.sample(samp, in.uv);
     c.a *= u.opacity;
-    c.rgb *= u.opacity;
+    c.rgb *= c.a;
     return c;
 }
 )METAL";

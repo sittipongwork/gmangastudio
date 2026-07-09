@@ -6,7 +6,6 @@
 #include "IllusStudioCanvasEditor.hpp"
 
 #include "math/Blend.hpp"
-#include "render/MetalStrokeRasterizer.hpp"
 #include "render/SoftwareRenderer.hpp"
 #include "render/StrokeRasterizer.hpp"
 #include "tools/procreate/FixtureBrushBytes.hpp"
@@ -15,6 +14,7 @@
 #include <Metal/Metal.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace illus {
@@ -120,33 +120,17 @@ void IllusStudioCanvasEditor::syncAllGpuLayers() {
 
 bool IllusStudioCanvasEditor::stampDabGpuOrCpu(
     uint8_t* cpuPixels,
-    MTL::Texture* gpuTex,
+    MTL::Texture* /*gpuTex*/,
     float x,
     float y,
     float pressure,
     const BrushPreset& preset,
     math::Rect& dirty
 ) {
-    // Always keep CPU buffer authoritative for selfCheck / export.
-    const bool cpuOk = StrokeRasterizer::stampDab(
+    // ponytail: CPU stamp + dirty uploadOverlay; dual GPU dab was waitUntilCompleted per dab (~70fps).
+    return StrokeRasterizer::stampDab(
         cpuPixels, page_.width, page_.height, x, y, pressure, preset, dirty, &brushes_.assets()
     );
-    if (cpuOk && gpuTex && gpuCompositeReady_ && gpu_.dabPipeline() && preset.tipTextureId < 0) {
-        // ponytail: dual-write CPU+GPU until T1-3-3 proves GPU-only; tip stamps stay CPU (upload overlay).
-        MetalStrokeRasterizer::stampDab(
-            metal_.commandQueue(),
-            gpu_.dabPipeline(),
-            gpuTex,
-            page_.width,
-            page_.height,
-            x,
-            y,
-            pressure,
-            preset,
-            dirty
-        );
-    }
-    return cpuOk;
 }
 
 void IllusStudioCanvasEditor::clearActiveLayer() {
@@ -286,7 +270,7 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
             liveStroke_.presetSnapshot,
             localDirty
         );
-        if (gpuCompositeReady_ && liveStroke_.presetSnapshot.tipTextureId >= 0 && !localDirty.empty()) {
+        if (gpuCompositeReady_ && !localDirty.empty()) {
             gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, localDirty);
         }
     } else {
@@ -321,7 +305,6 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
     const StrokeSample& prev = liveStroke_.samples.back();
     math::Rect localDirty{};
     if (strokeUsesOverlay_ && !liveOverlay_.empty()) {
-        float gpuCarry = dabCarry_;
         StrokeRasterizer::stampSegment(
             liveOverlay_.data(),
             page_.width,
@@ -334,29 +317,7 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
             &liveStroke_.bounds,
             &brushes_.assets()
         );
-        if (gpuCompositeReady_ && gpu_.overlayTexture() && gpu_.dabPipeline()
-            && liveStroke_.presetSnapshot.tipTextureId < 0) {
-            math::Rect gpuDirty{};
-            MetalStrokeRasterizer::stampSegment(
-                metal_.commandQueue(),
-                gpu_.dabPipeline(),
-                gpu_.overlayTexture(),
-                page_.width,
-                page_.height,
-                prev,
-                next,
-                liveStroke_.presetSnapshot,
-                gpuCarry,
-                gpuDirty,
-                nullptr
-            );
-            if (!gpuDirty.empty()) {
-                localDirty.unionWith(
-                    gpuDirty.x, gpuDirty.y, gpuDirty.x + gpuDirty.w - 1, gpuDirty.y + gpuDirty.h - 1
-                );
-            }
-        } else if (gpuCompositeReady_ && !localDirty.empty()) {
-            // Tip stamp is CPU-only — push overlay rect to GPU texture.
+        if (gpuCompositeReady_ && !localDirty.empty()) {
             gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, localDirty);
         }
     } else {
@@ -478,44 +439,39 @@ bool IllusStudioCanvasEditor::copyLayerThumbnailRGBA(
     return true;
 }
 
+void IllusStudioCanvasEditor::setTargetPresentFps(int32_t fps) {
+    targetPresentFps_ = std::max(0, fps);
+    haveLastPresentRebuild_ = false; // apply new cadence on next present
+}
+
 void* IllusStudioCanvasEditor::presentMetalTexture() {
-    // T1-4: GPU stack blend when compositor is ready; CPU composite remains for compositePixels().
+    // T1-4: GPU stack blend; stroke path already dirty-uploads overlay/layer.
+    // ponytail: do not syncAll + CPU flush every present — that capped ~70fps.
     if (gpuCompositeReady_) {
-        const bool needSync = uploadFull_ || fullDirty_ || !dirtyRect_.empty() || !uploadRect_.empty();
-        if (needSync) {
-            math::Rect region = dirtyRect_;
-            if (!uploadRect_.empty()) {
-                if (region.empty()) region = uploadRect_;
-                else {
-                    region.unionWith(
-                        uploadRect_.x,
-                        uploadRect_.y,
-                        uploadRect_.x + uploadRect_.w - 1,
-                        uploadRect_.y + uploadRect_.h - 1
-                    );
-                }
+        const auto now = std::chrono::steady_clock::now();
+        const bool forceSync = uploadFull_ || fullDirty_;
+        if (!forceSync && haveLastPresentRebuild_ && targetPresentFps_ > 0) {
+            const auto minInterval =
+                std::chrono::duration<double>(1.0 / static_cast<double>(targetPresentFps_));
+            if ((now - lastPresentRebuild_) < minInterval) {
+                // Skip GPU composite — return last present_ (UI may still blit).
+                void* cached = gpu_.presentTexture();
+                metalReady_ = cached != nullptr;
+                return cached;
             }
-            if (uploadFull_ || fullDirty_ || region.empty()) {
-                syncAllGpuLayers();
-            } else {
-                // Sync layers that may have changed: active (+ all if full safer).
-                // ponytail: dirty rect may span multiple layers after reorder — sync all when unsure.
-                syncAllGpuLayers();
-            }
-            if (stroking_ && strokeUsesOverlay_ && !liveOverlay_.empty()) {
-                math::Rect o = region.empty() ? math::Rect{0, 0, page_.width, page_.height} : region;
-                gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, o);
-            }
-            uploadRect_.setEmpty();
-            uploadFull_ = false;
-            // Keep CPU composite warm for export / selfCheck without forcing every present.
-            flushDirtyComposite();
         }
+        if (forceSync) {
+            syncAllGpuLayers();
+            uploadFull_ = false;
+        }
+        uploadRect_.setEmpty();
         void* tex = gpu_.present(
             layers_,
             layers_.activeId(),
             stroking_ && strokeUsesOverlay_
         );
+        lastPresentRebuild_ = now;
+        haveLastPresentRebuild_ = true;
         metalReady_ = tex != nullptr;
         return tex;
     }
@@ -670,6 +626,15 @@ bool IllusStudioCanvasEditor::selfCheck() {
         editor.beginStroke(8, 8, 1);
         editor.endStroke();
         if (editor.metalAvailable() && editor.presentMetalTexture() == nullptr) return false;
+    }
+
+    // Target present FPS is stored and readable (throttle exercised by UI).
+    {
+        IllusStudioCanvasEditor editor(8, 8);
+        editor.setTargetPresentFps(60);
+        if (editor.targetPresentFps() != 60) return false;
+        editor.setTargetPresentFps(120);
+        if (editor.targetPresentFps() != 120) return false;
     }
 
     // Erase: paint then erase → near-transparent at center.

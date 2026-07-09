@@ -299,6 +299,7 @@ void* LayerCompositor::present(const LayerStack& stack, int32_t activeLayerId, b
 
     enc->endEncoding();
     cmd->commit();
+    // Swift MTKView uses a different queue — must finish before that queue samples present_.
     cmd->waitUntilCompleted();
     return present_;
 }

@@ -429,6 +429,16 @@ bool CanvasEditor::metalAvailable() const {
     return impl_->editor.metalAvailable();
 }
 
+void CanvasEditor::setTargetPresentFps(int32_t fps) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->editor.setTargetPresentFps(fps);
+}
+
+int32_t CanvasEditor::targetPresentFps() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.targetPresentFps();
+}
+
 bool CanvasEditor::selfCheck() {
     return IllusStudioCanvasEditor::selfCheck();
 }
