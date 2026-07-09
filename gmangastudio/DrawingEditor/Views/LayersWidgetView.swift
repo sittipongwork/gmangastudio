@@ -29,6 +29,16 @@ struct LayerListItem: Identifiable, Equatable {
     }
 }
 
+private struct LayerContextMenuState: Equatable {
+    let layerId: Int32
+    let rowMidY: CGFloat
+}
+
+private enum LayerContextMenuSide {
+    case left  // menu to the left of the widget (caret on menu's trailing edge)
+    case right // menu to the right of the widget (caret on menu's leading edge)
+}
+
 struct LayersWidgetView: View {
     var layers: [LayerListItem]
     var activeLayerId: Int32
@@ -42,6 +52,8 @@ struct LayersWidgetView: View {
     var onClose: () -> Void = {}
     var onMoveChanged: ((DragGesture.Value) -> Void)? = nil
     var onMoveEnded: (() -> Void)? = nil
+    /// Widget origin X in the editor (used for left/right menu placement).
+    var widgetOriginX: CGFloat = 0
 
     private let accent = Color(red: 0.18, green: 0.48, blue: 0.95)
     private let widgetWidth: CGFloat = 280
@@ -49,7 +61,6 @@ struct LayersWidgetView: View {
     private let rowSpacing: CGFloat = 4
     private let listBottomPad: CGFloat = 10
     private let headerHeight: CGFloat = 56
-    /// Long edge of layer thumb (short edge follows document aspect).
     private let thumbMaxSide: CGFloat = 36
 
     var documentWidth: Int32 = 1
@@ -57,10 +68,9 @@ struct LayersWidgetView: View {
 
     @State private var draggingId: Int32?
     @State private var dragOriginIndex: Int = 0
-    /// Finger travel from press — list order stays fixed so this matches the cursor 1:1.
     @State private var dragTranslation: CGFloat = 0
-    /// Optimistic order after drop until parent catches up.
     @State private var localPaintOrder: [LayerListItem]?
+    @State private var contextMenu: LayerContextMenuState?
 
     private var paintLayers: [LayerListItem] {
         localPaintOrder ?? layers.filter { !$0.isBackground }
@@ -74,13 +84,9 @@ struct LayersWidgetView: View {
         CGFloat(paintLayers.count + (backgroundLayer == nil ? 0 : 1))
     }
 
-    private var strideY: CGFloat {
-        rowHeight + rowSpacing
-    }
+    private var strideY: CGFloat { rowHeight + rowSpacing }
 
-    private var maxWidgetHeight: CGFloat {
-        screenHeight * 0.65
-    }
+    private var maxWidgetHeight: CGFloat { screenHeight * 0.65 }
 
     private var screenHeight: CGFloat {
 #if os(macOS)
@@ -90,22 +96,24 @@ struct LayersWidgetView: View {
 #endif
     }
 
-    private var listMaxHeight: CGFloat {
-        max(0, maxWidgetHeight - headerHeight)
+    private var screenWidth: CGFloat {
+#if os(macOS)
+        NSScreen.main?.visibleFrame.width ?? 1200
+#else
+        UIScreen.main.bounds.width
+#endif
     }
+
+    private var listMaxHeight: CGFloat { max(0, maxWidgetHeight - headerHeight) }
 
     private var idealListHeight: CGFloat {
         guard rowCount > 0 else { return 0 }
         return rowCount * rowHeight + max(0, rowCount - 1) * rowSpacing + listBottomPad
     }
 
-    private var listHeight: CGFloat {
-        min(idealListHeight, listMaxHeight)
-    }
+    private var listHeight: CGFloat { min(idealListHeight, listMaxHeight) }
 
-    private var needsScroll: Bool {
-        idealListHeight > listMaxHeight
-    }
+    private var needsScroll: Bool { idealListHeight > listMaxHeight }
 
     private var thumbSize: CGSize {
         let w = max(1, CGFloat(documentWidth))
@@ -121,7 +129,53 @@ struct LayersWidgetView: View {
         min(max(0, dragOriginIndex + Int((dragTranslation / strideY).rounded())), max(0, paintLayers.count - 1))
     }
 
+    private var panelHeight: CGFloat {
+        headerHeight + (needsScroll ? listHeight : idealListHeight)
+    }
+
+    /// < 30% width → menu on right; > 80% → menu on left; else prefer the side with more room.
+    private var menuSide: LayerContextMenuSide {
+        let w = max(1, screenWidth)
+        let frac = widgetOriginX / w
+        if frac < 0.30 { return .right }
+        if frac > 0.80 { return .left }
+        return frac < 0.50 ? .right : .left
+    }
+
     var body: some View {
+        panelContent
+            .frame(width: widgetWidth)
+            .fixedSize(horizontal: false, vertical: true)
+            // Overlay (not HStack) so the panel does not slide when the menu opens.
+            .overlay(alignment: .topLeading) {
+                if let menu = contextMenu,
+                   let layer = layers.first(where: { $0.id == menu.layerId }),
+                   !layer.isBackground {
+                    let top = menuTopPadding(rowMidY: menu.rowMidY)
+                    let caretY = menu.rowMidY - top
+                    LayerContextMenuPopover(side: menuSide, caretY: caretY) { action in
+                        handleContextAction(action, layer: layer)
+                        contextMenu = nil
+                    }
+                    .offset(
+                        x: menuSide == .left
+                            ? -(LayerContextMenuPopover.totalWidth + 6)
+                            : widgetWidth + 6,
+                        y: top
+                    )
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.12), value: contextMenu?.layerId)
+    }
+
+    private func menuTopPadding(rowMidY: CGFloat) -> CGFloat {
+        let menuH = LayerContextMenuPopover.estimatedHeight
+        let ideal = rowMidY - menuH * 0.5
+        return min(max(0, ideal), max(0, panelHeight - menuH))
+    }
+
+    private var panelContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             Capsule()
                 .fill(Color.white.opacity(0.35))
@@ -179,8 +233,6 @@ struct LayersWidgetView: View {
                 layerStack
             }
         }
-        .frame(width: widgetWidth)
-        .fixedSize(horizontal: false, vertical: true)
         .background {
             ZStack {
                 Rectangle().fill(.ultraThinMaterial)
@@ -201,6 +253,32 @@ struct LayersWidgetView: View {
             if localPaintOrder?.map(\.id) == parentIds {
                 localPaintOrder = nil
             }
+            if let openId = contextMenu?.layerId, !newLayers.contains(where: { $0.id == openId }) {
+                contextMenu = nil
+            }
+        }
+    }
+
+    private func openContextMenu(for layer: LayerListItem) {
+        guard !layer.isBackground else { return }
+        let midY: CGFloat
+        if let paintIndex = paintLayers.firstIndex(where: { $0.id == layer.id }) {
+            midY = headerHeight + CGFloat(paintIndex) * strideY + rowHeight * 0.5
+        } else {
+            midY = headerHeight + rowHeight * 0.5
+        }
+        contextMenu = .init(layerId: layer.id, rowMidY: midY)
+    }
+
+    private func handleContextAction(_ action: LayerContextAction, layer: LayerListItem) {
+        switch action {
+        case .rename: break // ponytail: rename UI later
+        case .select: onSelect(layer.id)
+        case .copy: onDuplicate(layer.id)
+        case .fillLayer: break
+        case .clear: onClear(layer.id)
+        case .alphaLock, .mask, .clippingMask, .invert, .reference: break
+        case .mergeDown, .combineDown: onMergeDown(layer.id)
         }
     }
 
@@ -223,12 +301,9 @@ struct LayersWidgetView: View {
         .padding(.bottom, listBottomPad)
     }
 
-    /// Dragged row follows finger; others slide to open a gap at `dropIndex`.
     private func rowOffset(for id: Int32, at index: Int) -> CGFloat {
         guard let draggingId else { return 0 }
-        if id == draggingId {
-            return dragTranslation
-        }
+        if id == draggingId { return dragTranslation }
         let from = dragOriginIndex
         let to = dropIndex
         if from < to, index > from, index <= to { return -strideY }
@@ -239,7 +314,6 @@ struct LayersWidgetView: View {
     private func endDrag() {
         let from = dragOriginIndex
         let to = dropIndex
-
         var next = paintLayers
         var t = Transaction()
         t.disablesAnimations = true
@@ -252,7 +326,6 @@ struct LayersWidgetView: View {
                 localPaintOrder = next
             }
         }
-
         if to != from {
             onReorder(IndexSet(integer: from), to > from ? to + 1 : to)
         }
@@ -270,7 +343,6 @@ struct LayersWidgetView: View {
                     .frame(width: 22, height: 36)
                     .contentShape(Rectangle())
                     .gesture(
-                        // Global: translation stays cursor-true even if layout shifts.
                         DragGesture(minimumDistance: 4, coordinateSpace: .global)
                             .onChanged { value in
                                 if draggingId == nil {
@@ -280,9 +352,7 @@ struct LayersWidgetView: View {
                                 }
                                 dragTranslation = value.translation.height
                             }
-                            .onEnded { _ in
-                                endDrag()
-                            }
+                            .onEnded { _ in endDrag() }
                     )
                     .accessibilityLabel("Reorder layer")
             } else {
@@ -312,7 +382,10 @@ struct LayersWidgetView: View {
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
-            .onTapGesture { onSelect(layer.id) }
+            .onTapGesture {
+                contextMenu = nil
+                onSelect(layer.id)
+            }
 
             Button {
                 onToggleVisible(layer.id)
@@ -334,17 +407,23 @@ struct LayersWidgetView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: isDragging ? .black.opacity(0.4) : .clear, radius: isDragging ? 10 : 0, y: 3)
         .scaleEffect(isDragging ? 1.02 : 1)
-        .contextMenu {
+        .overlay {
             if !layer.isBackground {
-                layerContextMenu(layer)
+                LayerSecondaryClickCatcher {
+                    openContextMenu(for: layer)
+                }
             }
         }
+#if os(iOS)
+        .onLongPressGesture(minimumDuration: 0.35) {
+            openContextMenu(for: layer)
+        }
+#endif
     }
 
     @ViewBuilder
     private func layerThumbnail(_ layer: LayerListItem) -> some View {
         ZStack {
-            // Checker so transparent paint layers read clearly.
             CheckerboardBackground()
             if let thumbnail = layer.thumbnail {
                 thumbnail
@@ -356,27 +435,176 @@ struct LayersWidgetView: View {
             }
         }
     }
+}
 
-    @ViewBuilder
-    private func layerContextMenu(_ layer: LayerListItem) -> some View {
-        // Mac: right-click · iPad: long-press (SwiftUI contextMenu)
-        Button("Rename") {}
-        Button("Select") { onSelect(layer.id) }
-        Button("Copy") { onDuplicate(layer.id) }
-        Button("Fill Layer") {}
-        Button("Clear") { onClear(layer.id) }
-        Divider()
-        Button("Alpha Lock") {}
-        Button("Mask") {}
-        Button("Invert") {}
-        Button("Reference") {}
-        Divider()
-        Button("Merge Down") { onMergeDown(layer.id) }
-        Button("Combine Down") { onMergeDown(layer.id) }
+private enum LayerContextAction: String, CaseIterable, Identifiable {
+    case rename = "Rename"
+    case select = "Select"
+    case copy = "Copy"
+    case fillLayer = "Fill Layer"
+    case clear = "Clear"
+    case alphaLock = "Alpha Lock"
+    case mask = "Mask"
+    case clippingMask = "Clipping Mask"
+    case invert = "Invert"
+    case reference = "Reference"
+    case mergeDown = "Merge Down"
+    case combineDown = "Combine Down"
+
+    var id: String { rawValue }
+}
+
+/// Dark centered popover matching the Layers reference.
+/// Caret sits on the edge facing the widget and aligns vertically with the clicked row.
+private struct LayerContextMenuPopover: View {
+    static let width: CGFloat = 168
+    static let caretWidth: CGFloat = 9
+    static let totalWidth: CGFloat = width + caretWidth
+    static let rowHeight: CGFloat = 36
+    static var estimatedHeight: CGFloat {
+        CGFloat(LayerContextAction.allCases.count) * rowHeight + 8
+    }
+
+    var side: LayerContextMenuSide
+    /// Caret center Y relative to the top of this popover.
+    var caretY: CGFloat
+    var onAction: (LayerContextAction) -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            menuPanel
+                .offset(x: side == .right ? Self.caretWidth : 0)
+
+            caret
+                .offset(
+                    x: side == .right ? 0 : Self.width - 1,
+                    y: max(8, min(Self.estimatedHeight - 8, caretY)) - 8
+                )
+        }
+        .frame(width: Self.totalWidth, height: Self.estimatedHeight, alignment: .topLeading)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var menuPanel: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(LayerContextAction.allCases.enumerated()), id: \.element.id) { index, action in
+                Button {
+                    onAction(action)
+                } label: {
+                    Text(action.rawValue)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: Self.rowHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if index < LayerContextAction.allCases.count - 1 {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.14))
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(width: Self.width)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.72))
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.4), radius: 14, y: 6)
+    }
+
+    private var caret: some View {
+        // Points toward the widget: left-pointing when menu is on the right, and vice versa.
+        Path { path in
+            if side == .right {
+                path.move(to: CGPoint(x: Self.caretWidth, y: 0))
+                path.addLine(to: CGPoint(x: 0, y: 8))
+                path.addLine(to: CGPoint(x: Self.caretWidth, y: 16))
+            } else {
+                path.move(to: CGPoint(x: 0, y: 0))
+                path.addLine(to: CGPoint(x: Self.caretWidth, y: 8))
+                path.addLine(to: CGPoint(x: 0, y: 16))
+            }
+            path.closeSubpath()
+        }
+        .fill(Color.black.opacity(0.78))
+        .frame(width: Self.caretWidth, height: 16)
     }
 }
 
-/// Tiny checker for transparent layer thumbs.
+#if os(macOS)
+/// Transparent overlay: left-clicks pass through; right-clicks open the custom menu.
+private struct LayerSecondaryClickCatcher: NSViewRepresentable {
+    var onRightClick: () -> Void
+
+    func makeNSView(context: Context) -> RightClickView {
+        let view = RightClickView()
+        view.onRightClick = onRightClick
+        return view
+    }
+
+    func updateNSView(_ nsView: RightClickView, context: Context) {
+        nsView.onRightClick = onRightClick
+    }
+
+    final class RightClickView: NSView {
+        var onRightClick: (() -> Void)?
+        private var monitor: Any?
+
+        override var isOpaque: Bool { false }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            // Pass left-clicks to SwiftUI; right-click is handled via event monitor.
+            nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] event in
+                guard let self, self.window != nil else { return event }
+                let loc = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(loc) else { return event }
+                DispatchQueue.main.async { self.onRightClick?() }
+                return nil
+            }
+        }
+
+        override func removeFromSuperview() {
+            removeMonitor()
+            super.removeFromSuperview()
+        }
+
+        deinit { removeMonitor() }
+
+        private func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+    }
+}
+#else
+private struct LayerSecondaryClickCatcher: View {
+    var onRightClick: () -> Void
+    var body: some View { Color.clear.allowsHitTesting(false) }
+}
+#endif
+
 private struct CheckerboardBackground: View {
     var body: some View {
         Canvas { ctx, size in

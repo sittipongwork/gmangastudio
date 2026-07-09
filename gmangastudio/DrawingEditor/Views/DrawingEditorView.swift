@@ -107,6 +107,7 @@ struct DrawingEditorView: View {
                         layersDragStart = nil
                         LayersWidgetPositionStore.save(layersOrigin)
                     },
+                    widgetOriginX: layersOrigin.x,
                     documentWidth: viewModel.canvasWidth,
                     documentHeight: viewModel.canvasHeight
                 )
