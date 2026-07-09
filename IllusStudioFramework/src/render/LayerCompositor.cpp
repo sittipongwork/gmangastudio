@@ -312,15 +312,40 @@ bool LayerCompositor::selfCheck(MTL::Device* device, MTL::CommandQueue* queue) {
     if (!device || !queue) return true; // headless ok
     LayerCompositor c;
     if (!c.init(device, queue)) return false;
-    if (!c.ensureSize(8, 8)) return false;
-    std::vector<uint8_t> red(8 * 8 * 4, 0);
-    for (size_t i = 0; i < 64; ++i) {
-        red[i * 4] = 255;
-        red[i * 4 + 3] = 255;
+    if (!c.ensureSize(4, 4)) return false;
+
+    // Real stack: index 0 front (blue) over index 1 under (red) → present must be blue.
+    LayerStack stack(4, 4);
+    Layer* under = stack.at(0);
+    if (!under) return false;
+    under->ensurePixels(4, 4);
+    for (size_t i = 0; i < under->pixels.size(); i += 4) {
+        under->pixels[i] = 255;
+        under->pixels[i + 1] = 0;
+        under->pixels[i + 2] = 0;
+        under->pixels[i + 3] = 255;
     }
-    c.uploadLayer(1, red.data(), 8, 8, {0, 0, 8, 8});
-    // Minimal stack stand-in: just verify present texture exists after ensure.
-    return c.presentTexture() != nullptr && c.dabPipeline() != nullptr;
+    stack.add("Front");
+    Layer* front = stack.at(0);
+    if (!front) return false;
+    front->ensurePixels(4, 4);
+    for (size_t i = 0; i < front->pixels.size(); i += 4) {
+        front->pixels[i] = 0;
+        front->pixels[i + 1] = 0;
+        front->pixels[i + 2] = 255;
+        front->pixels[i + 3] = 255;
+    }
+    c.uploadLayer(under->id, under->pixels.data(), 4, 4, {0, 0, 4, 4});
+    c.uploadLayer(front->id, front->pixels.data(), 4, 4, {0, 0, 4, 4});
+    void* handle = c.present(stack, front->id, false);
+    if (!handle || !c.dabPipeline()) return false;
+    auto* tex = static_cast<MTL::Texture*>(handle);
+    uint8_t px[4] = {};
+    MTL::Region region;
+    region.origin = {0, 0, 0};
+    region.size = {1, 1, 1};
+    tex->getBytes(px, 4, region, 0);
+    return px[0] == 0 && px[1] == 0 && px[2] == 255 && px[3] == 255;
 }
 
 } // namespace illus

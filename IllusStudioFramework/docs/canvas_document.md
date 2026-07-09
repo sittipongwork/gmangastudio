@@ -101,7 +101,7 @@ UI-owned present performance gate. Keeps **120fps** while the user is working; d
 | **Inputs** | User activity (tap / click, move, touch, pan, zoom, tool change, …) |
 | **State** | `AppActiveStatus` + `lastUse` timestamp (`lastuse_counting`) |
 | **API** | App / DrawingEditor owns this (not required on `CanvasEditor`) |
-| **Rules** | Any activity → `performance_mode` and **reset** `lastUse`; idle ≥ **60s** → `low_energy_mode` |
+| **Rules** | Any activity → `performance_mode` and **reset** `lastUse`; idle ≥ **30s** → `idle_mode` |
 | **v1 out** | Per-window status when multi-document; background-app policy beyond idle |
 
 ### Statuses
@@ -109,13 +109,13 @@ UI-owned present performance gate. Keeps **120fps** while the user is working; d
 | Status | Default | Present |
 |--------|---------|---------|
 | **`performance_mode`** | Yes | High performance — continuous present @ **120fps** (when display supports it) |
-| **`low_energy_mode`** | After idle | Low refresh (**~10fps**) continuous present — lower GPU/CPU/display load; restore 120fps on next activity |
+| **`idle_mode`** | After idle | Low refresh (**~5fps**) continuous present — lower GPU/CPU/display load; restore 120fps on next activity |
 
 ### Idle rule (`lastuse_counting`)
 
 1. On enter / first show: `status = performance_mode`, `lastUse = now`.
-2. On **any** user action (tap, move, touch, scroll/pan, zoom, sidebar, toolbar): set `lastUse = now`; if was `low_energy_mode`, set `performance_mode` and restore 120fps present.
-3. If `now - lastUse >= 60s` with no activity: set `status = low_energy_mode` and drop present to low refresh (~10fps).
+2. On **any** user action (tap, move, touch, scroll/pan, zoom, sidebar, toolbar): set `lastUse = now`; if was `idle_mode`, set `performance_mode` and restore 120fps present.
+3. If `now - lastUse >= 30s` with no activity: set `status = idle_mode` and drop present to low refresh (~5fps).
 4. Mouse-only hover without click/drag does **not** count as activity (v1).
 
 ### Detail
@@ -123,15 +123,15 @@ UI-owned present performance gate. Keeps **120fps** while the user is working; d
 ```text
 enum AppActiveStatus {
     case performanceMode  // default — 120fps present (performance_mode)
-    case lowEnergyMode    // idle ≥ 60s — ~10fps present (low_energy_mode)
+    case idleMode         // idle ≥ 30s — ~5fps present (idle_mode)
 }
 
-let idleTimeout: TimeInterval = 60
-let lowEnergyPresentFPS = 10
+let idleTimeout: TimeInterval = 30
+let idlePresentFPS = 5
 ```
 
-- Self-check: activity resets idle; after timeout without activity → `low_energy_mode`; activity from `low_energy_mode` → `performance_mode`.
-- `low_energy_mode` stays on a continuous present path (not fully paused) so the canvas can still refresh, but at a low rate to decrease hardware use.
+- Self-check: activity resets idle; after timeout without activity → `idle_mode`; activity from `idle_mode` → `performance_mode`.
+- `idle_mode` stays on a continuous present path (not fully paused) so the canvas can still refresh, but at a low rate to decrease hardware use.
 ---
 
 ## Export (PNG / SVG / TIFF)

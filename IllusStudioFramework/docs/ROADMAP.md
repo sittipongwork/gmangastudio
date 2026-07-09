@@ -212,7 +212,7 @@ Former **P5**.
 - [x] **T6-4** `CanvasMetalView` MTKView @ 120fps; shared device with engine
 - [x] **T6-5** Mutex on `CanvasEditor` for draw vs gesture
 - [x] **T6-6** CPU `SoftwareRenderer` kept for composite / self-check / fallback
-- [x] **T6-7** App active status (UI): `performance_mode` @ 120Hz vs `low_energy_mode` @ 10Hz continuous present; 60s idle ([canvas_document.md](canvas_document.md))
+- [x] **T6-7** App active status (UI): `performance_mode` @ 120Hz vs `idle_mode` @ 5Hz continuous present; 30s idle ([canvas_document.md](canvas_document.md))
 
 **Ongoing (covered by T1-3 / T1-4):** compute raster + GPU layer blend on top of this present path.
 

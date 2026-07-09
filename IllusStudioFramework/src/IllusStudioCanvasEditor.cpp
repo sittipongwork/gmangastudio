@@ -590,6 +590,15 @@ void IllusStudioCanvasEditor::markDirty() {
 bool IllusStudioCanvasEditor::selfCheck() {
     if (!SoftwareRenderer::selfCheck()) return false;
     if (!MetalRenderer::selfCheck()) return false;
+    {
+        // GPU compositor stacking (top→down / index 0 front).
+        IllusStudioCanvasEditor probe(4, 4);
+        if (probe.metalAvailable() && probe.metal_.device() && probe.metal_.commandQueue()) {
+            if (!LayerCompositor::selfCheck(probe.metal_.device(), probe.metal_.commandQueue())) {
+                return false;
+            }
+        }
+    }
 
     // Paint darkens active layer; stroke count += 1.
     {
@@ -716,6 +725,47 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (e.layers().count() != 3) return false;
         const Layer* top = e.layers().at(0);
         if (!top || top->id != id2 || top->name != "Layer 2") return false;
+    }
+
+    // Stacking top→down: opaque paint on front layer covers under layer (CPU + GPU present).
+    {
+        IllusStudioCanvasEditor e(8, 8);
+        const int32_t underId = e.layers().activeId();
+        Layer* under = e.layers().find(underId);
+        if (!under) return false;
+        under->ensurePixels(8, 8);
+        for (size_t i = 0; i < under->pixels.size(); i += 4) {
+            under->pixels[i] = 255;
+            under->pixels[i + 1] = 0;
+            under->pixels[i + 2] = 0;
+            under->pixels[i + 3] = 255;
+        }
+        const int32_t topId = e.addLayer("Top");
+        Layer* top = e.layers().find(topId);
+        if (!top || e.layers().indexOf(topId) != 0) return false;
+        top->ensurePixels(8, 8);
+        for (size_t i = 0; i < top->pixels.size(); i += 4) {
+            top->pixels[i] = 0;
+            top->pixels[i + 1] = 0;
+            top->pixels[i + 2] = 255;
+            top->pixels[i + 3] = 255;
+        }
+        e.markDirty();
+        const uint8_t* cpu = e.compositePixels();
+        // Front is blue — must not show under red.
+        if (cpu[0] != 0 || cpu[1] != 0 || cpu[2] != 255) return false;
+
+        if (e.metalAvailable()) {
+            void* handle = e.presentMetalTexture();
+            if (!handle) return false;
+            auto* tex = static_cast<MTL::Texture*>(handle);
+            uint8_t px[4] = {0, 0, 0, 0};
+            MTL::Region region;
+            region.origin = {0, 0, 0};
+            region.size = {1, 1, 1};
+            tex->getBytes(px, 4, region, 0);
+            if (px[0] != 0 || px[1] != 0 || px[2] != 255) return false;
+        }
     }
 
     // Layer thumbnail downsample (white bg → opaque white pixel).

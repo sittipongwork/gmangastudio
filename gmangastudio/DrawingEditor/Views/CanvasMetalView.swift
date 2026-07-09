@@ -196,8 +196,8 @@ struct CanvasMetalView: NSViewRepresentable {
     private func applyPresentMode(to view: MTKView) {
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        // performance_mode: app-recommended divisor of panel Hz; low_energy: low refresh.
-        view.preferredFramesPerSecond = highPerformancePresent ? presentFps : 10
+        // performance_mode: app-recommended divisor of panel Hz; idle_mode: low refresh.
+        view.preferredFramesPerSecond = highPerformancePresent ? presentFps : AppActiveIdleTracker.idlePresentFps
     }
 
     final class Coordinator: NSObject {
@@ -350,8 +350,8 @@ struct CanvasMetalView: UIViewRepresentable {
     private func applyPresentMode(to view: MTKView) {
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        // performance_mode: app-recommended divisor of panel Hz; low_energy: low refresh.
-        view.preferredFramesPerSecond = highPerformancePresent ? presentFps : 10
+        // performance_mode: app-recommended divisor of panel Hz; idle_mode: low refresh.
+        view.preferredFramesPerSecond = highPerformancePresent ? presentFps : AppActiveIdleTracker.idlePresentFps
     }
 
     final class Coordinator: NSObject {

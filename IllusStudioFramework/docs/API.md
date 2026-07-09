@@ -155,7 +155,7 @@ Spec: [canvas_document.md](canvas_document.md) § Zoom & pan
 | Area | Spec / roadmap |
 |------|----------------|
 | Gizmo mode (`None` / `Vector`) | [canvas_document.md](canvas_document.md) · ROADMAP T2-6-0 |
-| App active status (UI idle → low_energy_mode) | [canvas_document.md](canvas_document.md) § App active status |
+| App active status (UI idle → idle_mode) | [canvas_document.md](canvas_document.md) § App active status |
 | Undo / redo / timelapse | [history.md](history.md) · ROADMAP T3 |
 | Import / export (PNG, SVG, TIFF) | [canvas_document.md](canvas_document.md) · ROADMAP T4 |
 | Stroke hit-test / move / adjust | [brush_drawing.md](brush_drawing.md) · ROADMAP T2-6 |

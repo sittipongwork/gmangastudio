@@ -138,7 +138,37 @@ bool SoftwareRenderer::selfCheck() {
     std::vector<uint8_t> out2(out.size(), 0);
     compositeRect(page, stack, out2, {2, 2, 1, 1});
     const uint8_t* c2 = &out2[(2u * 4u + 2u) * 4u];
-    return c[0] == c2[0] && c[1] == c2[1] && c[2] == c2[2] && c[3] == c2[3];
+    if (!(c[0] == c2[0] && c[1] == c2[1] && c[2] == c2[2] && c[3] == c2[3])) return false;
+
+    // Stacking: index 0 (front) opaque green must fully cover index 1 opaque red.
+    {
+        LayerStack order(2, 2);
+        Layer* under = order.at(0); // Layer 1
+        if (!under) return false;
+        under->ensurePixels(2, 2);
+        for (size_t i = 0; i < under->pixels.size(); i += 4) {
+            under->pixels[i] = 255;
+            under->pixels[i + 1] = 0;
+            under->pixels[i + 2] = 0;
+            under->pixels[i + 3] = 255;
+        }
+        order.add("Front");
+        Layer* top = order.at(0);
+        if (!top || top->id == under->id) return false;
+        top->ensurePixels(2, 2);
+        for (size_t i = 0; i < top->pixels.size(); i += 4) {
+            top->pixels[i] = 0;
+            top->pixels[i + 1] = 255;
+            top->pixels[i + 2] = 0;
+            top->pixels[i + 3] = 255;
+        }
+        PageSettings p2{2, 2, {0, 0, 0, 0}};
+        std::vector<uint8_t> stacked;
+        composite(p2, order, stacked);
+        const uint8_t* px = stacked.data();
+        if (px[0] != 0 || px[1] != 255 || px[2] != 0 || px[3] != 255) return false;
+    }
+    return true;
 }
 
 } // namespace illus
