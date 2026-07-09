@@ -122,10 +122,20 @@ final class CanvasMetalRenderer: NSObject, MTKViewDelegate {
             encoder.endEncoding()
             return
         }
-        let scale = min(dw / canvasWidth, dh / canvasHeight)
-        let w = canvasWidth * scale
-        let h = canvasHeight * scale
-        var uniforms = SIMD4<Float>(-w / dw, -h / dh, w / dw, h / dh)
+
+        // Present-time viewport: fit × user scale + pan (no re-raster).
+        let fit = min(dw / canvasWidth, dh / canvasHeight)
+        let s = fit * editor.viewportScale()
+        let drawnW = canvasWidth * s
+        let drawnH = canvasHeight * s
+        let originX = (dw - drawnW) * 0.5 - editor.viewportOffsetX() * s
+        let originY = (dh - drawnH) * 0.5 - editor.viewportOffsetY() * s
+        // NDC: x left→right, y bottom→top. View Y is top-down.
+        let xmin = -1 + 2 * originX / dw
+        let xmax = -1 + 2 * (originX + drawnW) / dw
+        let ymax = 1 - 2 * originY / dh
+        let ymin = 1 - 2 * (originY + drawnH) / dh
+        var uniforms = SIMD4<Float>(xmin, ymin, xmax, ymax)
 
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
@@ -144,8 +154,11 @@ struct CanvasMetalView: NSViewRepresentable {
     let editor: illus.CanvasEditor
     let canvasWidth: Int32
     let canvasHeight: Int32
+    var highPerformancePresent: Bool = true
     var onDragChanged: (CGPoint) -> Void
     var onDragEnded: () -> Void
+    var onPan: (CGSize, CGSize) -> Void
+    var onZoom: (CGFloat, CGPoint, CGSize) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -157,10 +170,9 @@ struct CanvasMetalView: NSViewRepresentable {
         view.framebufferOnly = true
         view.colorPixelFormat = .bgra8Unorm
         view.clearColor = MTLClearColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1)
-        view.isPaused = false
-        view.enableSetNeedsDisplay = false
-        view.preferredFramesPerSecond = 120
+        applyPresentMode(to: view)
         view.delegate = context.coordinator.renderer
+        context.coordinator.wireScroll(view)
         context.coordinator.attachGestures(to: view)
         return view
     }
@@ -168,12 +180,23 @@ struct CanvasMetalView: NSViewRepresentable {
     func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.renderer?.updateEditor(editor)
-        nsView.preferredFramesPerSecond = 120
+        applyPresentMode(to: nsView)
+        if let flipped = nsView as? FlippedMTKView {
+            context.coordinator.wireScroll(flipped)
+        }
+    }
+
+    private func applyPresentMode(to view: MTKView) {
+        view.isPaused = false
+        view.enableSetNeedsDisplay = false
+        // performance_mode: 120Hz; low_energy_mode: low refresh to cut GPU/CPU.
+        view.preferredFramesPerSecond = highPerformancePresent ? 120 : 10
     }
 
     final class Coordinator: NSObject {
         var parent: CanvasMetalView
         let renderer: CanvasMetalRenderer?
+        private var lastPanTranslation: CGPoint = .zero
 
         init(parent: CanvasMetalView) {
             self.parent = parent
@@ -184,12 +207,33 @@ struct CanvasMetalView: NSViewRepresentable {
             )
         }
 
-        func attachGestures(to view: MTKView) {
-            let pan = NSPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-            view.addGestureRecognizer(pan)
+        func wireScroll(_ view: FlippedMTKView) {
+            view.scrollHandler = { [weak self] dx, dy, command, loc in
+                guard let self else { return }
+                let size = view.bounds.size
+                if command {
+                    let factor: CGFloat = dy > 0 ? 1.05 : (dy < 0 ? 1 / 1.05 : 1)
+                    if factor != 1 { self.parent.onZoom(factor, loc, size) }
+                } else {
+                    self.parent.onPan(CGSize(width: dx, height: dy), size)
+                }
+            }
         }
 
-        @objc func handlePan(_ g: NSPanGestureRecognizer) {
+        func attachGestures(to view: MTKView) {
+            let draw = NSPanGestureRecognizer(target: self, action: #selector(handleDraw(_:)))
+            draw.buttonMask = 0x1
+            view.addGestureRecognizer(draw)
+
+            let pan = NSPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            pan.buttonMask = 0x2
+            view.addGestureRecognizer(pan)
+
+            let magnify = NSMagnificationGestureRecognizer(target: self, action: #selector(handleMagnify(_:)))
+            view.addGestureRecognizer(magnify)
+        }
+
+        @objc func handleDraw(_ g: NSPanGestureRecognizer) {
             guard let view = g.view else { return }
             let loc = g.location(in: view)
             let p = canvasPoint(loc, in: view.bounds.size)
@@ -203,26 +247,60 @@ struct CanvasMetalView: NSViewRepresentable {
             }
         }
 
-        /// View is flipped (top-left origin), matching canvas / UIKit.
+        @objc func handlePan(_ g: NSPanGestureRecognizer) {
+            guard let view = g.view else { return }
+            let t = g.translation(in: view)
+            switch g.state {
+            case .began:
+                lastPanTranslation = t
+            case .changed:
+                let dx = t.x - lastPanTranslation.x
+                let dy = t.y - lastPanTranslation.y
+                lastPanTranslation = t
+                parent.onPan(CGSize(width: dx, height: dy), view.bounds.size)
+            case .ended, .cancelled:
+                lastPanTranslation = .zero
+            default:
+                break
+            }
+        }
+
+        @objc func handleMagnify(_ g: NSMagnificationGestureRecognizer) {
+            guard let view = g.view, g.state == .changed || g.state == .ended else { return }
+            let factor = 1 + g.magnification
+            g.magnification = 0
+            parent.onZoom(factor, g.location(in: view), view.bounds.size)
+        }
+
         private func canvasPoint(_ location: CGPoint, in viewSize: CGSize) -> CGPoint {
-            let canvasW = CGFloat(parent.canvasWidth)
-            let canvasH = CGFloat(parent.canvasHeight)
-            let scale = min(viewSize.width / canvasW, viewSize.height / canvasH)
-            let drawnW = canvasW * scale
-            let drawnH = canvasH * scale
-            let originX = (viewSize.width - drawnW) * 0.5
-            let originY = (viewSize.height - drawnH) * 0.5
-            return CGPoint(
-                x: (location.x - originX) / scale,
-                y: (location.y - originY) / scale
+            let ed = parent.editor
+            let x = ed.viewToCanvasX(
+                Float(location.x), Float(location.y),
+                Float(viewSize.width), Float(viewSize.height)
             )
+            let y = ed.viewToCanvasY(
+                Float(location.x), Float(location.y),
+                Float(viewSize.width), Float(viewSize.height)
+            )
+            return CGPoint(x: CGFloat(x), y: CGFloat(y))
         }
     }
 }
 
 /// AppKit default is bottom-left; flip so gesture Y matches canvas (top-left, Y down).
 final class FlippedMTKView: MTKView {
+    var scrollHandler: ((CGFloat, CGFloat, Bool, CGPoint) -> Void)?
+
     override var isFlipped: Bool { true }
+
+    override func scrollWheel(with event: NSEvent) {
+        scrollHandler?(
+            event.scrollingDeltaX,
+            event.scrollingDeltaY,
+            event.modifierFlags.contains(.command),
+            convert(event.locationInWindow, from: nil)
+        )
+    }
 }
 
 extension CanvasMetalRenderer {
@@ -233,8 +311,11 @@ struct CanvasMetalView: UIViewRepresentable {
     let editor: illus.CanvasEditor
     let canvasWidth: Int32
     let canvasHeight: Int32
+    var highPerformancePresent: Bool = true
     var onDragChanged: (CGPoint) -> Void
     var onDragEnded: () -> Void
+    var onPan: (CGSize, CGSize) -> Void
+    var onZoom: (CGFloat, CGPoint, CGSize) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -246,9 +327,7 @@ struct CanvasMetalView: UIViewRepresentable {
         view.framebufferOnly = true
         view.colorPixelFormat = .bgra8Unorm
         view.clearColor = MTLClearColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1)
-        view.isPaused = false
-        view.enableSetNeedsDisplay = false
-        view.preferredFramesPerSecond = 120
+        applyPresentMode(to: view)
         view.delegate = context.coordinator.renderer
         context.coordinator.attachGestures(to: view)
         return view
@@ -257,12 +336,20 @@ struct CanvasMetalView: UIViewRepresentable {
     func updateUIView(_ uiView: MTKView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.renderer?.updateEditor(editor)
-        uiView.preferredFramesPerSecond = 120
+        applyPresentMode(to: uiView)
+    }
+
+    private func applyPresentMode(to view: MTKView) {
+        view.isPaused = false
+        view.enableSetNeedsDisplay = false
+        // performance_mode: 120Hz; low_energy_mode: low refresh to cut GPU/CPU.
+        view.preferredFramesPerSecond = highPerformancePresent ? 120 : 10
     }
 
     final class Coordinator: NSObject {
         var parent: CanvasMetalView
         let renderer: CanvasMetalRenderer?
+        private var lastPanTranslation: CGPoint = .zero
 
         init(parent: CanvasMetalView) {
             self.parent = parent
@@ -274,11 +361,20 @@ struct CanvasMetalView: UIViewRepresentable {
         }
 
         func attachGestures(to view: MTKView) {
+            let draw = UIPanGestureRecognizer(target: self, action: #selector(handleDraw(_:)))
+            draw.maximumNumberOfTouches = 1
+            view.addGestureRecognizer(draw)
+
             let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            pan.minimumNumberOfTouches = 2
+            pan.maximumNumberOfTouches = 2
             view.addGestureRecognizer(pan)
+
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+            view.addGestureRecognizer(pinch)
         }
 
-        @objc func handlePan(_ g: UIPanGestureRecognizer) {
+        @objc func handleDraw(_ g: UIPanGestureRecognizer) {
             let loc = g.location(in: g.view)
             let size = g.view?.bounds.size ?? .zero
             let p = canvasPoint(loc, in: size)
@@ -292,18 +388,41 @@ struct CanvasMetalView: UIViewRepresentable {
             }
         }
 
+        @objc func handlePan(_ g: UIPanGestureRecognizer) {
+            let t = g.translation(in: g.view)
+            switch g.state {
+            case .began:
+                lastPanTranslation = t
+            case .changed:
+                let dx = t.x - lastPanTranslation.x
+                let dy = t.y - lastPanTranslation.y
+                lastPanTranslation = t
+                parent.onPan(CGSize(width: dx, height: dy), g.view?.bounds.size ?? .zero)
+            case .ended, .cancelled:
+                lastPanTranslation = .zero
+            default:
+                break
+            }
+        }
+
+        @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
+            guard let view = g.view, g.state == .changed || g.state == .ended else { return }
+            let factor = g.scale
+            g.scale = 1
+            parent.onZoom(factor, g.location(in: view), view.bounds.size)
+        }
+
         private func canvasPoint(_ location: CGPoint, in viewSize: CGSize) -> CGPoint {
-            let canvasW = CGFloat(parent.canvasWidth)
-            let canvasH = CGFloat(parent.canvasHeight)
-            let scale = min(viewSize.width / canvasW, viewSize.height / canvasH)
-            let drawnW = canvasW * scale
-            let drawnH = canvasH * scale
-            let originX = (viewSize.width - drawnW) * 0.5
-            let originY = (viewSize.height - drawnH) * 0.5
-            return CGPoint(
-                x: (location.x - originX) / scale,
-                y: (location.y - originY) / scale
+            let ed = parent.editor
+            let x = ed.viewToCanvasX(
+                Float(location.x), Float(location.y),
+                Float(viewSize.width), Float(viewSize.height)
             )
+            let y = ed.viewToCanvasY(
+                Float(location.x), Float(location.y),
+                Float(viewSize.width), Float(viewSize.height)
+            )
+            return CGPoint(x: CGFloat(x), y: CGFloat(y))
         }
     }
 }

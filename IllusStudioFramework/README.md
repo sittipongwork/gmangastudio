@@ -3,7 +3,8 @@
 C++ canvas engine for gmangastudio. Swift UI lives in page COPs (`DrawingEditor`); this framework owns document, layers, tools, viewport, history, animation, and rendering. See [AGENTS.md](../AGENTS.md) for the UI ↔ Bridge ↔ Engine contract.
 
 **Tasks & roadmap (status):** [docs/ROADMAP.md](docs/ROADMAP.md)  
-**Feature specs:** [canvas_document.md](docs/canvas_document.md) · [layer.md](docs/layer.md) · [brush_drawing.md](docs/brush_drawing.md) · [history.md](docs/history.md) · [animation_timeline.md](docs/animation_timeline.md)
+**Public API index:** [docs/API.md](docs/API.md)  
+**Feature specs:** [canvas_document.md](docs/canvas_document.md) · [layer.md](docs/layer.md) · [brush_drawing.md](docs/brush_drawing.md) · [history.md](docs/history.md) · [animation_timeline.md](docs/animation_timeline.md) · [AI_Integration.md](docs/AI_Integration.md)
 
 ## Purpose
 
@@ -84,11 +85,13 @@ IllusStudioFramework/
   README.md                   Architecture (this file)
   docs/
     ROADMAP.md                Tasks & status (single checklist)
+    API.md                    Public CanvasEditor API index
     canvas_document.md        Page setting, zoom/pan, export
     layer.md                  Layer management
     brush_drawing.md          Brush / eraser / hybrid drawing + image import
     history.md                Undo / redo / timelapse
     animation_timeline.md     Animation & timeline
+    AI_Integration.md         AI-assisted features (reference → line-art, …)
   src/
     CanvasEditor.cpp          Public API pimpl
     IllusStudioCanvasEditor.hpp/.cpp   Internal facade
@@ -134,6 +137,7 @@ Detailed specs live under `docs/` — expand those files, not this README.
 | Brush library, eraser, image import | [docs/brush_drawing.md](docs/brush_drawing.md) |
 | History (undo / redo / timelapse) | [docs/history.md](docs/history.md) |
 | Animation & timeline | [docs/animation_timeline.md](docs/animation_timeline.md) |
+| AI integration | [docs/AI_Integration.md](docs/AI_Integration.md) |
 
 ## Performance notes
 

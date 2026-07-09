@@ -14,6 +14,7 @@ namespace illus {
 enum class ToolMode : int32_t {
     Brush = 0,
     Eraser = 1,
+    Pointer = 2,
 };
 
 /// Public editor facade. Shared ownership so Swift can hold/pass copies.
@@ -86,6 +87,16 @@ public:
     void endStroke();
 
     int32_t strokeCountOnLayer(int32_t layerId) const;
+
+    void setViewport(float scale, float offsetX, float offsetY);
+    float viewportScale() const;
+    float viewportOffsetX() const;
+    float viewportOffsetY() const;
+    /// Map view-space point → canvas pixels (tools always use canvas space).
+    float viewToCanvasX(float viewX, float viewY, float viewW, float viewH) const;
+    float viewToCanvasY(float viewX, float viewY, float viewW, float viewH) const;
+    float canvasToViewX(float canvasX, float canvasY, float viewW, float viewH) const;
+    float canvasToViewY(float canvasX, float canvasY, float viewW, float viewH) const;
 
     /// Borrowed MTLTexture* as address (owned by editor). 0 if Metal unavailable.
     std::uintptr_t presentMetalTextureAddress();

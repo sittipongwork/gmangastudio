@@ -126,10 +126,12 @@ void BrushLibrary::setTool(ToolMode mode) {
     tool_ = mode;
     if (mode == ToolMode::Eraser) {
         if (find(lastErasePresetId_)) session_.presetId = lastErasePresetId_;
-    } else {
+        syncSessionFromPreset();
+    } else if (mode == ToolMode::Brush) {
         if (find(lastPaintPresetId_)) session_.presetId = lastPaintPresetId_;
+        syncSessionFromPreset();
     }
-    syncSessionFromPreset();
+    // Pointer: keep last paint/erase presets; no stroke session change.
 }
 
 void BrushLibrary::syncSessionFromPreset() {

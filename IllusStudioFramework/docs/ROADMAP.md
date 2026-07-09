@@ -1,7 +1,7 @@
 # IllusStudioFramework — Roadmap & tasks
 
 Single source of truth for **what to build** and **done vs open**.  
-Architecture / design: [README.md](../README.md) · Specs: [canvas_document.md](canvas_document.md) · [layer.md](layer.md) · [brush_drawing.md](brush_drawing.md) · [history.md](history.md) · [animation_timeline.md](animation_timeline.md) · App: [AGENTS.md](../../AGENTS.md)
+Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Specs: [canvas_document.md](canvas_document.md) · [layer.md](layer.md) · [brush_drawing.md](brush_drawing.md) · [history.md](history.md) · [animation_timeline.md](animation_timeline.md) · [AI_Integration.md](AI_Integration.md) · App: [AGENTS.md](../../AGENTS.md)
 
 **Status:** `[x]` done · `[ ]` not done  
 **Ids:** `T#` epic · `T#-#` task · `T#-#-#` subtask
@@ -14,7 +14,7 @@ Architecture / design: [README.md](../README.md) · Specs: [canvas_document.md](
 |----|------|--------|
 | [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done |
 | [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, move/adjust, Procreate import) | T1-1 done |
-| [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) | open |
+| [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) | done |
 | [T3](#t3--history-undo--redo--timelapse) | History (undo / redo / timelapse) | open |
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
 | [T5](#t5--animation--timeline) | Animation & timeline | open |
@@ -76,15 +76,16 @@ Former **P1** (tools) + [brush_drawing.md](brush_drawing.md). Vector source of t
 
 ### T1-5 — Easy move / adjust line (P1e)
 
-Layer-scoped vector query + edit. Depends on **T1-1**.
+Layer-scoped vector query + edit. Depends on **T1-1**. Gizmo overlay: [canvas_document.md](canvas_document.md) § Gizmo mode.
 
+- [ ] **T1-5-0** `GizmoMode` (`None` default / `Vector`) — `setGizmoMode` / `gizmoMode`; Vector shows points + 4px solid polyline
 - [ ] **T1-5-1** Query: `strokeCountOnLayer` / `strokeIdAt` / `strokeBounds`
 - [ ] **T1-5-2** `copyStrokePolyline` (Swift-friendly buffer; no `std::vector` in public API)
 - [ ] **T1-5-3** `hitTestStroke(layerId, x, y, radius)` — that layer only
 - [ ] **T1-5-4** `translateStroke` + `setStrokePoint` (or batch polyline set)
 - [ ] **T1-5-5** Invalidate union(old, new) bounds → re-raster one layer
 - [ ] **T1-5-6** Self-check: translate moves bounds; other layers unchanged; wrong `layerId` cannot see stroke
-- [ ] **T1-5-7** Swift DrawingEditor: select / drag move / point handles (active layer only)
+- [ ] **T1-5-7** Swift DrawingEditor: Vector gizmo overlay; Pointer-mode drag adjusts points (active layer only)
 
 ### T1-6 — Hybrid follow-ups
 
@@ -112,11 +113,11 @@ Import `.brush` / `.brushset` (later `.brushlibrary`) into `BrushLibrary`. Desig
 
 Former **P1** viewport half.
 
-- [ ] **T2-1** `viewport/` — `Viewport { scale, offset }`
-- [ ] **T2-2** Public `setViewport` + view↔canvas helpers
-- [ ] **T2-3** Tools receive **canvas-space** points only (UI or engine maps)
-- [ ] **T2-4** Present applies viewport as transform (no re-raster on pan)
-- [ ] **T2-5** Self-check: view→canvas→view round-trip within epsilon
+- [x] **T2-1** `viewport/` — `Viewport { scale, offset }`
+- [x] **T2-2** Public `setViewport` + view↔canvas helpers
+- [x] **T2-3** Tools receive **canvas-space** points only (UI or engine maps)
+- [x] **T2-4** Present applies viewport as transform (no re-raster on pan)
+- [x] **T2-5** Self-check: view→canvas→view round-trip within epsilon
 
 **v1 out:** rotate canvas, snap-to-pixel UI chrome.
 
@@ -226,4 +227,4 @@ T0 (done) → T6 (done)
 
 1. Flip `[ ]` → `[x]` when the task is done in code + self-check where required.
 2. Add new work as the next free `T#-#` / `T#-#-#` under the right epic.
-3. Keep design detail in feature docs ([canvas_document.md](canvas_document.md), [layer.md](layer.md), [brush_drawing.md](brush_drawing.md), [history.md](history.md), [animation_timeline.md](animation_timeline.md)) / [README.md](../README.md); keep **status only** here.
+3. Keep design detail in feature docs ([canvas_document.md](canvas_document.md), [layer.md](layer.md), [brush_drawing.md](brush_drawing.md), [history.md](history.md), [animation_timeline.md](animation_timeline.md), [AI_Integration.md](AI_Integration.md)) / [README.md](../README.md); keep **status only** here.

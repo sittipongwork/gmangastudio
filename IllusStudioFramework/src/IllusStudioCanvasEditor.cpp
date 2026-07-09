@@ -31,6 +31,37 @@ void IllusStudioCanvasEditor::setBackground(uint8_t r, uint8_t g, uint8_t b, uin
     markDirty();
 }
 
+void IllusStudioCanvasEditor::setViewport(float scale, float offsetX, float offsetY) {
+    viewport_.scale = scale;
+    viewport_.offsetX = offsetX;
+    viewport_.offsetY = offsetY;
+    viewport_.clampScale();
+}
+
+float IllusStudioCanvasEditor::viewToCanvasX(float viewX, float viewY, float viewW, float viewH) const {
+    float x = 0.f, y = 0.f;
+    viewport_.viewToCanvas(viewX, viewY, viewW, viewH, static_cast<float>(page_.width), static_cast<float>(page_.height), x, y);
+    return x;
+}
+
+float IllusStudioCanvasEditor::viewToCanvasY(float viewX, float viewY, float viewW, float viewH) const {
+    float x = 0.f, y = 0.f;
+    viewport_.viewToCanvas(viewX, viewY, viewW, viewH, static_cast<float>(page_.width), static_cast<float>(page_.height), x, y);
+    return y;
+}
+
+float IllusStudioCanvasEditor::canvasToViewX(float canvasX, float canvasY, float viewW, float viewH) const {
+    float x = 0.f, y = 0.f;
+    viewport_.canvasToView(canvasX, canvasY, viewW, viewH, static_cast<float>(page_.width), static_cast<float>(page_.height), x, y);
+    return x;
+}
+
+float IllusStudioCanvasEditor::canvasToViewY(float canvasX, float canvasY, float viewW, float viewH) const {
+    float x = 0.f, y = 0.f;
+    viewport_.canvasToView(canvasX, canvasY, viewW, viewH, static_cast<float>(page_.width), static_cast<float>(page_.height), x, y);
+    return y;
+}
+
 LayerStrokeList& IllusStudioCanvasEditor::strokeListFor(int32_t layerId) {
     auto& list = strokesByLayer_[layerId];
     list.layerId = layerId;
@@ -134,6 +165,7 @@ StrokeSample IllusStudioCanvasEditor::smoothSample(float x, float y, float press
 }
 
 void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
+    if (brushes_.tool() == ToolMode::Pointer) return;
     Layer* layer = layers_.active();
     if (!layer) return;
 
@@ -407,6 +439,32 @@ bool IllusStudioCanvasEditor::selfCheck() {
             && !std::all_of(back->pixels.begin(), back->pixels.end(), [](uint8_t v) { return v == 0; })) {
             return false;
         }
+    }
+
+    // Pointer tool does not paint.
+    {
+        IllusStudioCanvasEditor editor(32, 32);
+        editor.brushes().setTool(ToolMode::Pointer);
+        const int32_t layerId = editor.layers().activeId();
+        editor.beginStroke(16, 16, 1);
+        editor.endStroke();
+        if (editor.strokeCountOnLayer(layerId) != 0) return false;
+        if (editor.brushes().tool() != ToolMode::Pointer) return false;
+    }
+
+    // Viewport view↔canvas round-trip.
+    {
+        IllusStudioCanvasEditor editor(100, 50);
+        editor.setViewport(2.f, 10.f, -5.f);
+        const float vw = 400.f, vh = 300.f;
+        const float cx = 40.f, cy = 20.f;
+        const float vx = editor.canvasToViewX(cx, cy, vw, vh);
+        const float vy = editor.canvasToViewY(cx, cy, vw, vh);
+        const float rx = editor.viewToCanvasX(vx, vy, vw, vh);
+        const float ry = editor.viewToCanvasY(vx, vy, vw, vh);
+        if (std::abs(rx - cx) > 1e-3f || std::abs(ry - cy) > 1e-3f) return false;
+        if (std::abs(editor.viewport().scale - 2.f) > 1e-6f) return false;
+        if (std::abs(editor.viewport().offsetX - 10.f) > 1e-6f) return false;
     }
 
     return true;

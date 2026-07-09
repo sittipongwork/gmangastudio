@@ -23,6 +23,7 @@ IllusStudioFramework/            Core canvas engine (C++) — separate framework
   docs/brush_drawing.md          Hybrid brush / vector design + image import
   docs/history.md                Undo / redo / timelapse
   docs/animation_timeline.md     Animation & timeline
+  docs/AI_Integration.md         AI-assisted features
   IllusStudioFramework.h         Umbrella (C++)
   CanvasEditor.hpp               Public C++ API (Swift–C++ interop)
   module.modulemap

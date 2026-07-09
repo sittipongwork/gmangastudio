@@ -11,6 +11,7 @@
 #include "render/MetalRenderer.hpp"
 #include "strokes/Stroke.hpp"
 #include "tools/BrushLibrary.hpp"
+#include "viewport/Viewport.hpp"
 
 #include <cstdint>
 #include <unordered_map>
@@ -29,6 +30,15 @@ public:
     const LayerStack& layers() const { return layers_; }
     BrushLibrary& brushes() { return brushes_; }
     const BrushLibrary& brushes() const { return brushes_; }
+
+    Viewport& viewport() { return viewport_; }
+    const Viewport& viewport() const { return viewport_; }
+    void setViewport(float scale, float offsetX, float offsetY);
+
+    float viewToCanvasX(float viewX, float viewY, float viewW, float viewH) const;
+    float viewToCanvasY(float viewX, float viewY, float viewW, float viewH) const;
+    float canvasToViewX(float canvasX, float canvasY, float viewW, float viewH) const;
+    float canvasToViewY(float canvasX, float canvasY, float viewW, float viewH) const;
 
     void markDirty();
 
@@ -71,6 +81,7 @@ private:
     PageSettings page_;
     LayerStack layers_;
     BrushLibrary brushes_;
+    Viewport viewport_;
     std::unordered_map<int32_t, LayerStrokeList> strokesByLayer_;
     int32_t nextStrokeId_ = 1;
 

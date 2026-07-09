@@ -79,6 +79,8 @@ Placement {
 - Move by `(dx, dy)` → bounds shift by that delta; other layers unchanged.
 - Corner resize → opposite corner fixed within epsilon; edge resize → only one axis changes.
 
+**AI path:** reference → line-art → line/color layers — see [AI_Integration.md](AI_Integration.md#1-import-reference-image).
+
 ---
 
 ## Goals
@@ -195,7 +197,7 @@ PointerSample {
 Keep the existing stream; add tool/preset selection + **pre-draw brush properties** (see Brush library):
 
 ```text
-setTool(Brush | Eraser)
+setTool(Brush | Eraser | Pointer)
 setBrushPreset(presetId)
 // Session overrides — user adjusts in UI *before* drawing (do not mutate library until "Save brush")
 setBrushLineWidth(float) / setBrushLineSmooth(float) / setBrushHardness(float) / …
@@ -725,7 +727,7 @@ Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
 
 ```cpp
 // CanvasEditor.hpp — additive; names illustrative
-enum class ToolMode : int32_t { Brush = 0, Eraser = 1 };
+enum class ToolMode : int32_t { Brush = 0, Eraser = 1, Pointer = 2 };
 
 void setTool(ToolMode mode);
 ToolMode tool() const;

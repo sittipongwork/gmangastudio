@@ -298,6 +298,46 @@ int32_t CanvasEditor::strokeCountOnLayer(int32_t layerId) const {
     return impl_->editor.strokeCountOnLayer(layerId);
 }
 
+void CanvasEditor::setViewport(float scale, float offsetX, float offsetY) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->editor.setViewport(scale, offsetX, offsetY);
+}
+
+float CanvasEditor::viewportScale() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.viewport().scale;
+}
+
+float CanvasEditor::viewportOffsetX() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.viewport().offsetX;
+}
+
+float CanvasEditor::viewportOffsetY() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.viewport().offsetY;
+}
+
+float CanvasEditor::viewToCanvasX(float viewX, float viewY, float viewW, float viewH) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.viewToCanvasX(viewX, viewY, viewW, viewH);
+}
+
+float CanvasEditor::viewToCanvasY(float viewX, float viewY, float viewW, float viewH) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.viewToCanvasY(viewX, viewY, viewW, viewH);
+}
+
+float CanvasEditor::canvasToViewX(float canvasX, float canvasY, float viewW, float viewH) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.canvasToViewX(canvasX, canvasY, viewW, viewH);
+}
+
+float CanvasEditor::canvasToViewY(float canvasX, float canvasY, float viewW, float viewH) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.canvasToViewY(canvasX, canvasY, viewW, viewH);
+}
+
 std::uintptr_t CanvasEditor::presentMetalTextureAddress() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return reinterpret_cast<std::uintptr_t>(impl_->editor.presentMetalTexture());
@@ -318,7 +358,7 @@ bool CanvasEditor::selfCheck() {
 }
 
 const char* CanvasEditor::version() {
-    return "IllusStudioFramework 0.6.0-cxx";
+    return "IllusStudioFramework 0.7.0-cxx";
 }
 
 } // namespace illus
