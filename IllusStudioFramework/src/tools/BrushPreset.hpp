@@ -20,6 +20,7 @@ enum class BrushMode : int32_t {
 enum class BrushSource : int32_t {
     BuiltIn = 0,
     User = 1,
+    ImportedProcreate = 2,
 };
 
 struct BrushPreset {
@@ -36,7 +37,16 @@ struct BrushPreset {
     float spacing = 0.25f;    // fraction of effective width
     float sizePressure = 1.f; // 0..1
     float opacityPressure = 0.f;
+    float angleDeg = 0.f;
+    float roundness = 1.f; // 0..1 (1 = circle)
     math::RGBA color{20, 20, 20, 255};
+
+    /// BrushAssetStore ids; 0 / negative = none (procedural round dab).
+    int32_t tipTextureId = -1;
+    int32_t grainTextureId = -1;
+    int32_t previewTextureId = -1;
+    /// True when import mapped few keys / used defaults (UI badge).
+    bool approximated = false;
 };
 
 } // namespace illus

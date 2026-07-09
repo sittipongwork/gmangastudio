@@ -5,6 +5,7 @@
 
 #include "../CanvasEditor.hpp"
 #include "IllusStudioCanvasEditor.hpp"
+#include "tools/procreate/ProcreateBrushImporter.hpp"
 
 #include <mutex>
 
@@ -168,6 +169,11 @@ const char* CanvasEditor::brushSetName(int32_t setIndex) const {
     return impl_->editor.brushes().setName(setIndex);
 }
 
+int32_t CanvasEditor::brushSetSource(int32_t setIndex) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return static_cast<int32_t>(impl_->editor.brushes().setSource(setIndex));
+}
+
 int32_t CanvasEditor::brushPresetCount() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.brushes().presetCount();
@@ -186,6 +192,11 @@ const char* CanvasEditor::brushPresetName(int32_t index) const {
 const char* CanvasEditor::brushPresetNameInSet(int32_t setIndex, int32_t presetIndex) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.brushes().presetNameInSet(setIndex, presetIndex);
+}
+
+bool CanvasEditor::brushPresetApproximated(int32_t setIndex, int32_t presetIndex) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.brushes().presetApproximated(setIndex, presetIndex);
 }
 
 bool CanvasEditor::setBrushPreset(int32_t index) {
@@ -207,6 +218,37 @@ int32_t CanvasEditor::activeBrushPresetIndex() const {
         if (impl_->editor.brushes().presetIdAt(i) == id) return i;
     }
     return -1;
+}
+
+int32_t CanvasEditor::importBrushPackage(const char* path, BrushPackageKind kind, int32_t* outBrushCount) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (outBrushCount) *outBrushCount = 0;
+    const auto result = ::illus::importBrushPackagePath(
+        impl_->editor.brushes(), impl_->editor.brushes().assets(), path, kind
+    );
+    if (outBrushCount) *outBrushCount = result.brushCount;
+    return result.setId;
+}
+
+int32_t CanvasEditor::importBrushPackageBytes(
+    const uint8_t* data,
+    int32_t size,
+    BrushPackageKind kind,
+    const char* suggestedName,
+    int32_t* outBrushCount
+) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (outBrushCount) *outBrushCount = 0;
+    const auto result = ::illus::importBrushPackageBytes(
+        impl_->editor.brushes(),
+        impl_->editor.brushes().assets(),
+        data,
+        size,
+        kind,
+        suggestedName
+    );
+    if (outBrushCount) *outBrushCount = result.brushCount;
+    return result.setId;
 }
 
 namespace {

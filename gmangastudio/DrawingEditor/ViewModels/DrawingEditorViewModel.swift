@@ -34,6 +34,7 @@ final class DrawingEditorViewModel {
     private(set) var activeLayerId: Int32 = 0
     /// Bumps when active layer pixels change (stroke / clear) so thumbs refresh.
     private var layerContentRevision: [Int32: Int] = [:]
+    var isBrushImportPresented = false
 
     private var isStroking = false
     private var idle = AppActiveIdleTracker()
@@ -128,6 +129,39 @@ final class DrawingEditorViewModel {
         reloadBrushPresets()
         if let first = brushPresets.first {
             selectBrushPreset(first.id)
+        }
+    }
+
+    func presentBrushImport() {
+        noteUserActivity()
+        isBrushImportPresented = true
+    }
+
+    func importBrushPackage(from url: URL) {
+        noteUserActivity()
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+        }
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
+        var ed = editor
+        var brushCount: Int32 = 0
+        let name = url.lastPathComponent
+        let setId = data.withUnsafeBytes { raw -> Int32 in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
+            return ed.importBrushPackageBytes(
+                base,
+                Int32(data.count),
+                .Auto,
+                name,
+                &brushCount
+            )
+        }
+        editor = ed
+        guard setId >= 0 else { return }
+        reloadBrushLibrary()
+        if let idx = brushSets.last(where: { $0.isImported })?.id {
+            selectBrushSet(idx)
         }
     }
 
@@ -333,7 +367,13 @@ final class DrawingEditorViewModel {
         var sets: [BrushLibrarySetItem] = []
         for i in 0..<setCount {
             let name = String(cString: ed.brushSetName(i))
-            sets.append(.init(id: i, name: name.isEmpty ? "Set \(i)" : name, systemImage: iconForBrushSet(name)))
+            let imported = ed.brushSetSource(i) == 2
+            sets.append(.init(
+                id: i,
+                name: name.isEmpty ? "Set \(i)" : name,
+                systemImage: iconForBrushSet(name, imported: imported),
+                isImported: imported
+            ))
         }
         brushSets = sets
         if selectedBrushSetIndex >= setCount {
@@ -348,9 +388,13 @@ final class DrawingEditorViewModel {
         var items: [BrushLibraryPresetItem] = []
         for i in 0..<count {
             let name = String(cString: ed.brushPresetNameInSet(selectedBrushSetIndex, i))
-            // ponytail: stroke weight from name heuristics until preset preview API exists
             let weight: CGFloat = name.contains("air") || name.contains("soft") ? 8 : 4
-            items.append(.init(id: i, name: name.isEmpty ? "Brush \(i)" : name, strokeWeight: weight))
+            items.append(.init(
+                id: i,
+                name: name.isEmpty ? "Brush \(i)" : name,
+                strokeWeight: weight,
+                approximated: ed.brushPresetApproximated(selectedBrushSetIndex, i)
+            ))
         }
         brushPresets = items
         if selectedBrushPresetIndex >= count {
@@ -358,7 +402,8 @@ final class DrawingEditorViewModel {
         }
     }
 
-    private func iconForBrushSet(_ name: String) -> String {
+    private func iconForBrushSet(_ name: String, imported: Bool) -> String {
+        if imported { return "square.and.arrow.down.on.square" }
         let n = name.lowercased()
         if n.contains("ink") { return "pencil.tip" }
         if n.contains("air") { return "cloud" }

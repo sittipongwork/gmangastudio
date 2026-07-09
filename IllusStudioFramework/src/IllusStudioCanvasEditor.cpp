@@ -9,6 +9,8 @@
 #include "render/MetalStrokeRasterizer.hpp"
 #include "render/SoftwareRenderer.hpp"
 #include "render/StrokeRasterizer.hpp"
+#include "tools/procreate/FixtureBrushBytes.hpp"
+#include "tools/procreate/ProcreateBrushImporter.hpp"
 
 #include <Metal/Metal.hpp>
 
@@ -127,10 +129,10 @@ bool IllusStudioCanvasEditor::stampDabGpuOrCpu(
 ) {
     // Always keep CPU buffer authoritative for selfCheck / export.
     const bool cpuOk = StrokeRasterizer::stampDab(
-        cpuPixels, page_.width, page_.height, x, y, pressure, preset, dirty
+        cpuPixels, page_.width, page_.height, x, y, pressure, preset, dirty, &brushes_.assets()
     );
-    if (cpuOk && gpuTex && gpuCompositeReady_ && gpu_.dabPipeline()) {
-        // ponytail: dual-write CPU+GPU until T1-3-3 proves GPU-only; CPU stays source of truth.
+    if (cpuOk && gpuTex && gpuCompositeReady_ && gpu_.dabPipeline() && preset.tipTextureId < 0) {
+        // ponytail: dual-write CPU+GPU until T1-3-3 proves GPU-only; tip stamps stay CPU (upload overlay).
         MetalStrokeRasterizer::stampDab(
             metal_.commandQueue(),
             gpu_.dabPipeline(),
@@ -284,11 +286,22 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
             liveStroke_.presetSnapshot,
             localDirty
         );
+        if (gpuCompositeReady_ && liveStroke_.presetSnapshot.tipTextureId >= 0 && !localDirty.empty()) {
+            gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, localDirty);
+        }
     } else {
         layer->ensurePixels(page_.width, page_.height);
         // Erase: CPU into layer; sync GPU texture so present stays current.
         StrokeRasterizer::stampDab(
-            *layer, page_.width, page_.height, s.x, s.y, s.pressure, liveStroke_.presetSnapshot, localDirty
+            *layer,
+            page_.width,
+            page_.height,
+            s.x,
+            s.y,
+            s.pressure,
+            liveStroke_.presetSnapshot,
+            localDirty,
+            &brushes_.assets()
         );
         if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     }
@@ -318,9 +331,11 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
             liveStroke_.presetSnapshot,
             dabCarry_,
             localDirty,
-            &liveStroke_.bounds
+            &liveStroke_.bounds,
+            &brushes_.assets()
         );
-        if (gpuCompositeReady_ && gpu_.overlayTexture() && gpu_.dabPipeline()) {
+        if (gpuCompositeReady_ && gpu_.overlayTexture() && gpu_.dabPipeline()
+            && liveStroke_.presetSnapshot.tipTextureId < 0) {
             math::Rect gpuDirty{};
             MetalStrokeRasterizer::stampSegment(
                 metal_.commandQueue(),
@@ -340,6 +355,9 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
                     gpuDirty.x, gpuDirty.y, gpuDirty.x + gpuDirty.w - 1, gpuDirty.y + gpuDirty.h - 1
                 );
             }
+        } else if (gpuCompositeReady_ && !localDirty.empty()) {
+            // Tip stamp is CPU-only — push overlay rect to GPU texture.
+            gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, localDirty);
         }
     } else {
         StrokeRasterizer::stampSegment(
@@ -351,7 +369,8 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
             liveStroke_.presetSnapshot,
             dabCarry_,
             localDirty,
-            &liveStroke_.bounds
+            &liveStroke_.bounds,
+            &brushes_.assets()
         );
         if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     }
@@ -817,6 +836,36 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (std::abs(rx - cx) > 1e-3f || std::abs(ry - cy) > 1e-3f) return false;
         if (std::abs(editor.viewport().scale - 2.f) > 1e-6f) return false;
         if (std::abs(editor.viewport().offsetX - 10.f) > 1e-6f) return false;
+    }
+
+    // T1-7: fixture .brush import → set + tip texture + tip stamp paints.
+    {
+        IllusStudioCanvasEditor editor(48, 48);
+        const int32_t setsBefore = editor.brushes().setCount();
+        const auto imported = importBrushPackageBytes(
+            editor.brushes(),
+            editor.brushes().assets(),
+            fixture::kBrushZip,
+            fixture::kBrushZipSize,
+            BrushPackageKind::Brush,
+            "fixture.brush"
+        );
+        if (!imported.ok || imported.brushCount < 1) return false;
+        if (editor.brushes().setCount() != setsBefore + 1) return false;
+        const int32_t setIndex = editor.brushes().indexOfSetId(imported.setId);
+        if (setIndex < 0) return false;
+        if (editor.brushes().setSource(setIndex) != BrushSource::ImportedProcreate) return false;
+        const int32_t presetId = editor.brushes().presetIdInSet(setIndex, 0);
+        const BrushPreset* p = editor.brushes().find(presetId);
+        if (!p || p->tipTextureId < 0) return false;
+        if (!editor.brushes().assets().find(p->tipTextureId)) return false;
+        if (std::abs(p->lineWidthPx - 24.f) > 0.5f) return false;
+        if (!editor.brushes().setActivePreset(presetId)) return false;
+        editor.beginStroke(24, 24, 1);
+        editor.endStroke();
+        Layer* layer = editor.layers().active();
+        if (!layer || !layer->hasPixels()) return false;
+        if (layer->pixelAt(24, 24, 48)[3] < 10) return false;
     }
 
     return true;

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "BrushAssetStore.hpp"
 #include "BrushPreset.hpp"
 #include "BrushSession.hpp"
 
@@ -29,12 +30,16 @@ public:
 
     int32_t setCount() const { return static_cast<int32_t>(sets_.size()); }
     const char* setName(int32_t setIndex) const;
+    BrushSource setSource(int32_t setIndex) const;
+    int32_t setIdAt(int32_t setIndex) const;
+    int32_t indexOfSetId(int32_t setId) const;
     int32_t presetCountInSet(int32_t setIndex) const;
     int32_t presetCount() const { return static_cast<int32_t>(presets_.size()); }
     const char* presetName(int32_t index) const;
     const char* presetNameInSet(int32_t setIndex, int32_t presetIndex) const;
     int32_t presetIdAt(int32_t index) const;
     int32_t presetIdInSet(int32_t setIndex, int32_t presetIndex) const;
+    bool presetApproximated(int32_t setIndex, int32_t presetIndex) const;
 
     const BrushPreset* find(int32_t presetId) const;
     BrushPreset* find(int32_t presetId);
@@ -48,12 +53,18 @@ public:
     BrushSession& session() { return session_; }
     const BrushSession& session() const { return session_; }
 
+    BrushAssetStore& assets() { return assets_; }
+    const BrushAssetStore& assets() const { return assets_; }
+
     void resetSession();
     /// Snapshot library ⊕ session for beginStroke.
     BrushPreset resolvedPreset() const;
 
     /// Append user preset from current session; returns new id or -1.
     int32_t saveSessionAsPreset(const char* name);
+
+    /// Append imported set; assigns ids; returns set id or -1.
+    int32_t addImportedSet(const char* name, BrushSource source, std::vector<BrushPreset>& presets);
 
 private:
     void seedBuiltIns();
@@ -62,6 +73,7 @@ private:
     int32_t lastErasePresetId_ = 0;
     ToolMode tool_ = ToolMode::Brush;
     BrushSession session_;
+    BrushAssetStore assets_;
     std::vector<BrushSet> sets_;
     std::vector<BrushPreset> presets_;
     int32_t nextPresetId_ = 1;

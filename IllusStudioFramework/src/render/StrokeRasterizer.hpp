@@ -9,6 +9,7 @@
 #include "../math/Rect.hpp"
 #include "../strokes/Stroke.hpp"
 #include "../strokes/StrokeSample.hpp"
+#include "../tools/BrushAssetStore.hpp"
 
 #include <cstdint>
 
@@ -17,6 +18,7 @@ namespace illus {
 class StrokeRasterizer {
 public:
     /// Stamp one dab into a full-frame RGBA buffer (size width*height*4).
+    /// `assets` optional — used when preset.tipTextureId is set.
     static bool stampDab(
         uint8_t* pixels,
         int32_t width,
@@ -25,7 +27,8 @@ public:
         float y,
         float pressure,
         const BrushPreset& preset,
-        math::Rect& dirty
+        math::Rect& dirty,
+        const BrushAssetStore* assets = nullptr
     );
 
     /// Stamp one dab onto a layer (ensures pixels).
@@ -37,7 +40,8 @@ public:
         float y,
         float pressure,
         const BrushPreset& preset,
-        math::Rect& dirty
+        math::Rect& dirty,
+        const BrushAssetStore* assets = nullptr
     );
 
     static void stampSegment(
@@ -49,7 +53,8 @@ public:
         const BrushPreset& preset,
         float& carryDist,
         math::Rect& dirty,
-        StrokeBounds* bounds
+        StrokeBounds* bounds,
+        const BrushAssetStore* assets = nullptr
     );
 
     static void stampSegment(
@@ -61,7 +66,8 @@ public:
         const BrushPreset& preset,
         float& carryDist,
         math::Rect& dirty,
-        StrokeBounds* bounds
+        StrokeBounds* bounds,
+        const BrushAssetStore* assets = nullptr
     );
 
     static float effectiveRadius(float pressure, const BrushPreset& preset);

@@ -9,12 +9,14 @@ struct BrushLibrarySetItem: Identifiable, Equatable {
     let id: Int32
     let name: String
     let systemImage: String
+    let isImported: Bool
 }
 
 struct BrushLibraryPresetItem: Identifiable, Equatable {
     let id: Int32 // preset index within set
     let name: String
     let strokeWeight: CGFloat
+    let approximated: Bool
 }
 
 struct BrushLibraryWidgetView: View {
@@ -24,7 +26,7 @@ struct BrushLibraryWidgetView: View {
     var selectedPresetIndex: Int32
     var onSelectSet: (Int32) -> Void
     var onSelectPreset: (Int32) -> Void
-    var onAdd: () -> Void = {}
+    var onImport: () -> Void = {}
     var onClose: () -> Void = {}
     var onMoveChanged: ((DragGesture.Value) -> Void)? = nil
     var onMoveEnded: (() -> Void)? = nil
@@ -51,14 +53,14 @@ struct BrushLibraryWidgetView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                 Spacer()
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
+                Button(action: onImport) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Add brush")
+                .accessibilityLabel("Import Procreate brush")
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .semibold))
@@ -115,9 +117,21 @@ struct BrushLibraryWidgetView: View {
                                 onSelectPreset(preset.id)
                             } label: {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(preset.name)
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(.white)
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(preset.name)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(.white)
+                                        Spacer(minLength: 4)
+                                        if preset.approximated {
+                                            Text("approx")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(.white.opacity(0.7))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.white.opacity(0.12))
+                                                .clipShape(Capsule())
+                                        }
+                                    }
                                     BrushStrokePreview(weight: preset.strokeWeight)
                                         .frame(height: 28)
                                 }
@@ -182,12 +196,12 @@ private struct BrushStrokePreview: View {
 #Preview {
     BrushLibraryWidgetView(
         sets: [
-            .init(id: 0, name: "Built-in", systemImage: "paintbrush.pointed"),
-            .init(id: 1, name: "Inking", systemImage: "pencil.tip"),
+            .init(id: 0, name: "Built-in", systemImage: "paintbrush.pointed", isImported: false),
+            .init(id: 1, name: "Inking", systemImage: "pencil.tip", isImported: true),
         ],
         presets: [
-            .init(id: 0, name: "ink.round", strokeWeight: 4),
-            .init(id: 1, name: "air.soft", strokeWeight: 8),
+            .init(id: 0, name: "ink.round", strokeWeight: 4, approximated: false),
+            .init(id: 1, name: "air.soft", strokeWeight: 8, approximated: true),
         ],
         selectedSetIndex: 0,
         selectedPresetIndex: 0,

@@ -18,6 +18,13 @@ enum class ToolMode : int32_t {
     Pointer = 2,
 };
 
+enum class BrushPackageKind : int32_t {
+    Auto = 0,
+    Brush = 1,
+    BrushSet = 2,
+    BrushLibrary = 3,
+};
+
 /// Public editor facade. Shared ownership so Swift can hold/pass copies.
 class CanvasEditor {
 public:
@@ -62,13 +69,26 @@ public:
 
     int32_t brushSetCount() const;
     const char* brushSetName(int32_t setIndex) const SWIFT_RETURNS_INDEPENDENT_VALUE;
+    /// 0 BuiltIn, 1 User, 2 ImportedProcreate
+    int32_t brushSetSource(int32_t setIndex) const;
     int32_t brushPresetCount() const;
     int32_t brushPresetCountInSet(int32_t setIndex) const;
     const char* brushPresetName(int32_t index) const SWIFT_RETURNS_INDEPENDENT_VALUE;
     const char* brushPresetNameInSet(int32_t setIndex, int32_t presetIndex) const SWIFT_RETURNS_INDEPENDENT_VALUE;
+    bool brushPresetApproximated(int32_t setIndex, int32_t presetIndex) const;
     bool setBrushPreset(int32_t index);
     bool setBrushPresetInSet(int32_t setIndex, int32_t presetIndex);
     int32_t activeBrushPresetIndex() const;
+
+    /// Import Procreate-style `.brush` / `.brushset` / `.brushlibrary`. Returns set id or -1.
+    int32_t importBrushPackage(const char* path, BrushPackageKind kind, int32_t* outBrushCount);
+    int32_t importBrushPackageBytes(
+        const uint8_t* data,
+        int32_t size,
+        BrushPackageKind kind,
+        const char* suggestedName,
+        int32_t* outBrushCount
+    );
 
     void setBrushLineWidth(float px);
     float brushLineWidth() const;

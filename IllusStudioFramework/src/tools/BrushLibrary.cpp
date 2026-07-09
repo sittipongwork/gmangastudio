@@ -65,6 +65,23 @@ const char* BrushLibrary::setName(int32_t setIndex) const {
     return sets_[static_cast<size_t>(setIndex)].name.c_str();
 }
 
+BrushSource BrushLibrary::setSource(int32_t setIndex) const {
+    if (setIndex < 0 || setIndex >= setCount()) return BrushSource::BuiltIn;
+    return sets_[static_cast<size_t>(setIndex)].source;
+}
+
+int32_t BrushLibrary::setIdAt(int32_t setIndex) const {
+    if (setIndex < 0 || setIndex >= setCount()) return -1;
+    return sets_[static_cast<size_t>(setIndex)].id;
+}
+
+int32_t BrushLibrary::indexOfSetId(int32_t setId) const {
+    for (int32_t i = 0; i < setCount(); ++i) {
+        if (sets_[static_cast<size_t>(i)].id == setId) return i;
+    }
+    return -1;
+}
+
 int32_t BrushLibrary::presetCountInSet(int32_t setIndex) const {
     if (setIndex < 0 || setIndex >= setCount()) return 0;
     return static_cast<int32_t>(sets_[static_cast<size_t>(setIndex)].presetIds.size());
@@ -91,6 +108,11 @@ int32_t BrushLibrary::presetIdInSet(int32_t setIndex, int32_t presetIndex) const
     const auto& ids = sets_[static_cast<size_t>(setIndex)].presetIds;
     if (presetIndex < 0 || presetIndex >= static_cast<int32_t>(ids.size())) return -1;
     return ids[static_cast<size_t>(presetIndex)];
+}
+
+bool BrushLibrary::presetApproximated(int32_t setIndex, int32_t presetIndex) const {
+    const BrushPreset* p = find(presetIdInSet(setIndex, presetIndex));
+    return p ? p->approximated : false;
 }
 
 const BrushPreset* BrushLibrary::find(int32_t presetId) const {
@@ -194,6 +216,26 @@ int32_t BrushLibrary::saveSessionAsPreset(const char* name) {
     session_.presetId = id;
     syncSessionFromPreset();
     return id;
+}
+
+int32_t BrushLibrary::addImportedSet(const char* name, BrushSource source, std::vector<BrushPreset>& presets) {
+    if (presets.empty()) return -1;
+    BrushSet set;
+    set.id = nextSetId_++;
+    set.name = (name && name[0]) ? name : "Imported";
+    set.source = source;
+    for (BrushPreset& p : presets) {
+        p.id = nextPresetId_++;
+        if (p.name.empty()) p.name = "Brush";
+        p.source = source;
+        set.presetIds.push_back(p.id);
+        if (p.mode == BrushMode::Erase) lastErasePresetId_ = p.id;
+        else lastPaintPresetId_ = p.id;
+        presets_.push_back(std::move(p));
+    }
+    const int32_t setId = set.id;
+    sets_.push_back(std::move(set));
+    return setId;
 }
 
 } // namespace illus

@@ -5,6 +5,7 @@
 
 import IllusStudioFramework
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct DrawingEditorView: View {
     @State private var viewModel = DrawingEditorViewModel()
@@ -59,6 +60,7 @@ struct DrawingEditorView: View {
                     selectedPresetIndex: viewModel.selectedBrushPresetIndex,
                     onSelectSet: { viewModel.selectBrushSet($0) },
                     onSelectPreset: { viewModel.selectBrushPreset($0) },
+                    onImport: { viewModel.presentBrushImport() },
                     onClose: { viewModel.toggleBrushLibrary() },
                     onMoveChanged: { value in
                         if brushLibraryDragStart == nil {
@@ -117,6 +119,21 @@ struct DrawingEditorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fileImporter(
+            isPresented: Binding(
+                get: { viewModel.isBrushImportPresented },
+                set: { viewModel.isBrushImportPresented = $0 }
+            ),
+            allowedContentTypes: [
+                UTType(filenameExtension: "brush") ?? .data,
+                UTType(filenameExtension: "brushset") ?? .data,
+                UTType(filenameExtension: "brushlibrary") ?? .data,
+            ],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            viewModel.importBrushPackage(from: url)
+        }
         .onAppear {
             brushLibraryOrigin = FloatingWidgetPositionStore.seedIfNeeded(
                 key: BrushLibraryWidgetPositionStore.key,
