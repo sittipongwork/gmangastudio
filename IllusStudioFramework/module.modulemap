@@ -1,0 +1,5 @@
+framework module IllusStudioFramework {
+    umbrella header "IllusStudioFramework.h"
+    export *
+    module * { export * }
+}

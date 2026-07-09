@@ -5,21 +5,24 @@ SwiftUI app for manga studio work. **Primary targets: macOS and iPad (iPadOS).**
 ## Project Structure
 
 ```text
-gmangastudio/                    App sources (SwiftUI)
+gmangastudio/                    App sources (SwiftUI) — UI layer
   gmangastudioApp.swift          App entry (`@main`), window / scene setup
   ContentView.swift              Root shell (routes into page COPs)
   Assets.xcassets/               Colors, app icon
   Shared/                        Cross-page helpers (only when reused by 2+ pages)
-    Views/                       Shared SwiftUI pieces
-    Models/                      Shared types
-    Services/                    Shared I/O (files, export, etc.)
+  DrawingEditor/                 Drawing page COP (imports IllusStudioFramework)
+    Views/DrawingEditorView.swift
+    ViewModels/DrawingEditorViewModel.swift
   <PageName>/                    One folder per page / feature (page COP)
-    Views/                       SwiftUI views for this page
-      <PageName>View.swift       Page root view (entry for this COP)
-      <Something>View.swift      Child / section views (same page only)
-    ViewModels/
-      <PageName>ViewModel.swift  Page state + intents (`@Observable` / `ObservableObject`)
-    Models/                      Page-local types (omit folder if none yet)
+    Views/  ViewModels/  Models/
+IllusStudioFramework/            Core canvas engine (C++) + C bridge — separate framework target
+  README.md                      IllusStudioCanvasEditor architecture plan (read before engine work)
+  IllusStudioFramework.h         Umbrella header
+  ISCanvas.h                     Public C API (Swift-importable)
+  module.modulemap
+  src/
+    CanvasEngine.hpp/.cpp        Private C++ engine
+    ISCanvas.cpp                 Bridge implementation
 gmangastudioTests/               Unit tests (mirror page folders when useful)
 gmangastudioUITests/             UI tests
 gmangastudio.xcodeproj/          Xcode project
@@ -102,8 +105,7 @@ Canvas work is split across three layers. UI never talks to C++ directly; it goe
 ## Stack
 
 - SwiftUI + Swift (UI layer, Xcode-managed app target)
-- Bridge: C API / Obj-C++ (Swift ↔ engine)
-- Core Canvas Engine: C++ (separate library/framework)
+- **IllusStudioFramework** — C++ canvas engine + C bridge (`import IllusStudioFramework`); architecture: [IllusStudioFramework/README.md](IllusStudioFramework/README.md)
 - Xcode / Apple SDKs (no package manager unless one is added later)
 - Design and test for **Mac** and **iPad** first (pointer/trackpad, large canvas, split views)
 - Deployment targets follow the Xcode project settings
