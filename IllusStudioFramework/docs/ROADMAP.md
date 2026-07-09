@@ -12,9 +12,9 @@ Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Spe
 
 | Id | Epic | Status |
 |----|------|--------|
-| [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done |
-| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, move/adjust, Procreate import) | T1-1 done |
-| [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) | done |
+| [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done (blend modes open) |
+| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import) | T1-1…T1-4 done (T1-3-3 measure open) |
+| [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) + move/adjust + hybrid follow-ups | T2-1…T2-5 done (T2-6 / T2-7 open) |
 | [T3](#t3--history-undo--redo--timelapse) | History (undo / redo / timelapse) | open |
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
 | [T5](#t5--animation--timeline) | Animation & timeline | open |
@@ -38,7 +38,21 @@ Former **P0**.
 - [x] **T0-10** Background Layer (locked back) + `Layer N` auto-name; page underlay transparent; white fill lives on Background Layer only ([layer.md](layer.md))
 - [x] **T0-11** `copyLayerThumbnailRGBA` (nearest downsample, document aspect) + self-check; DrawingEditor Layers panel thumbs refresh after paint / layer edits
 
-**v1 out:** layer groups, masks, full blend-mode catalog.
+### T0-12 — Layer blending modes (Procreate-style)
+
+Spec: [layer.md](layer.md) § Layer blending modes. Default for new layers: **`N` / Normal**.
+
+- [ ] **T0-12-0** Expand `BlendMode` enum (unique cases; UI badges may collide: H/S/L) — Normal already exists
+- [ ] **T0-12-1** Public `setLayerBlendMode` / `layerBlendMode`; new layers default **Normal**
+- [ ] **T0-12-2** CPU composite path: Darken group — Multiply, Darken, Color Burn, Linear Burn
+- [ ] **T0-12-3** CPU composite path: Lighten group — Screen, Lighten, Color Dodge, Add
+- [ ] **T0-12-4** CPU composite path: Contrast — Overlay, Hard Light, Soft Light
+- [ ] **T0-12-5** CPU composite path: Exclusion + Component (Hue, Saturation, Color, Luminosity)
+- [ ] **T0-12-6** Self-check fixtures: Multiply / Screen / Overlay (A/B known pixels)
+- [ ] **T0-12-7** DrawingEditor Layers panel: badge + mode picker (grouped like Procreate)
+- [ ] **T0-12-8** GPU `LayerCompositor` (T1-4) honors same `BlendMode` set
+
+**v1 out (T0):** layer groups, masks. Blend catalog above is in-scope for T0-12 (not “v1 out”).
 
 ---
 
@@ -61,40 +75,21 @@ Former **P1** (tools) + [brush_drawing.md](brush_drawing.md). Vector source of t
 
 ### T1-2 — Live overlay + dirty tiles (P1b)
 
-- [ ] **T1-2-1** Live stroke overlay buffer/texture (layer + overlay while stroking)
-- [ ] **T1-2-2** Merge overlay → layer on `endStroke`
-- [ ] **T1-2-3** Tile dirty tracking for upload / compute
+- [x] **T1-2-1** Live stroke overlay buffer/texture (layer + overlay while stroking)
+- [x] **T1-2-2** Merge overlay → layer on `endStroke`
+- [x] **T1-2-3** Tile dirty tracking for upload / compute
 
 ### T1-3 — Metal compute rasterizer (P1c)
 
-- [ ] **T1-3-1** Compute kernel: dab/segment coverage → layer texture
-- [ ] **T1-3-2** Keep CPU path for `selfCheck` / headless
+- [x] **T1-3-1** Compute kernel: dab/segment coverage → layer texture
+- [x] **T1-3-2** Keep CPU path for `selfCheck` / headless
 - [ ] **T1-3-3** Measure 120Hz stroke on 1920×1080 multi-layer
 
 ### T1-4 — GPU layer composite (P1d)
 
-- [ ] **T1-4-1** Per-layer `MTLTexture` cache
-- [ ] **T1-4-2** `LayerCompositor` — blend stack on GPU
-- [ ] **T1-4-3** Retire full-document CPU composite on hot present path (keep for export until T4)
-
-### T1-5 — Easy move / adjust line (P1e)
-
-Layer-scoped vector query + edit. Depends on **T1-1**. Gizmo overlay: [canvas_document.md](canvas_document.md) § Gizmo mode.
-
-- [ ] **T1-5-0** `GizmoMode` (`None` default / `Vector`) — `setGizmoMode` / `gizmoMode`; Vector shows points + 4px solid polyline
-- [ ] **T1-5-1** Query: `strokeCountOnLayer` / `strokeIdAt` / `strokeBounds`
-- [ ] **T1-5-2** `copyStrokePolyline` (Swift-friendly buffer; no `std::vector` in public API)
-- [ ] **T1-5-3** `hitTestStroke(layerId, x, y, radius)` — that layer only
-- [ ] **T1-5-4** `translateStroke` + `setStrokePoint` (or batch polyline set)
-- [ ] **T1-5-5** Invalidate union(old, new) bounds → re-raster one layer
-- [ ] **T1-5-6** Self-check: translate moves bounds; other layers unchanged; wrong `layerId` cannot see stroke
-- [ ] **T1-5-7** Swift DrawingEditor: Vector gizmo overlay; Pointer-mode drag adjusts points (active layer only)
-
-### T1-6 — Hybrid follow-ups
-
-- [ ] **T1-6-1** Optional Bézier fit on `endStroke` (`math/Bezier`) for storage / SVG
-- [ ] **T1-6-2** Tilt-aware `beginStrokeEx` / `continueStrokeEx` when UI ready
-- [ ] **T1-6-3** Stroke→tile index if undo/re-raster becomes hot
+- [x] **T1-4-1** Per-layer `MTLTexture` cache
+- [x] **T1-4-2** `LayerCompositor` — blend stack on GPU (Normal now; full modes: [T0-12](#t0-12--layer-blending-modes-procreate-style) / T0-12-8)
+- [x] **T1-4-3** Retire full-document CPU composite on hot present path (keep for export until T4)
 
 ### T1-7 — Procreate-style brush import
 
@@ -122,6 +117,25 @@ Former **P1** viewport half.
 - [x] **T2-4** Present applies viewport as transform (no re-raster on pan)
 - [x] **T2-5** Self-check: view→canvas→view round-trip within epsilon
 
+### T2-6 — Easy move / adjust line (was T1-5 / P1e)
+
+Layer-scoped vector query + edit. Depends on **T1-1**. Gizmo overlay: [canvas_document.md](canvas_document.md) § Gizmo mode.
+
+- [ ] **T2-6-0** `GizmoMode` (`None` default / `Vector`) — `setGizmoMode` / `gizmoMode`; Vector shows points + 4px solid polyline
+- [ ] **T2-6-1** Query: `strokeCountOnLayer` / `strokeIdAt` / `strokeBounds`
+- [ ] **T2-6-2** `copyStrokePolyline` (Swift-friendly buffer; no `std::vector` in public API)
+- [ ] **T2-6-3** `hitTestStroke(layerId, x, y, radius)` — that layer only
+- [ ] **T2-6-4** `translateStroke` + `setStrokePoint` (or batch polyline set)
+- [ ] **T2-6-5** Invalidate union(old, new) bounds → re-raster one layer
+- [ ] **T2-6-6** Self-check: translate moves bounds; other layers unchanged; wrong `layerId` cannot see stroke
+- [ ] **T2-6-7** Swift DrawingEditor: Vector gizmo overlay; Pointer-mode drag adjusts points (active layer only)
+
+### T2-7 — Hybrid follow-ups (was T1-6)
+
+- [ ] **T2-7-1** Optional Bézier fit on `endStroke` (`math/Bezier`) for storage / SVG
+- [ ] **T2-7-2** Tilt-aware `beginStrokeEx` / `continueStrokeEx` when UI ready
+- [ ] **T2-7-3** Stroke→tile index if undo/re-raster becomes hot
+
 **v1 out:** rotate canvas, snap-to-pixel UI chrome.
 
 ---
@@ -132,7 +146,7 @@ Former **P2**. Design hooks land with T1; full stack here.
 
 - [ ] **T3-1** `history/` command stack
 - [ ] **T3-2** `StrokeCommand` on `endStroke`
-- [ ] **T3-3** `TransformStrokeCommand` / `EditStrokePointCommand` (from T1-5)
+- [ ] **T3-3** `TransformStrokeCommand` / `EditStrokePointCommand` (from T2-6)
 - [ ] **T3-4** `LayerCommand` (add/remove/reorder/…)
 - [ ] **T3-5** Public `undo` / `redo` / `canUndo` / `canRedo`
 - [ ] **T3-6** Timelapse append-only op log + timestamps
@@ -218,10 +232,12 @@ Former **P5**.
 
 ```text
 T0 (done) → T6 (done)
+         → T0-12 (layer blend modes; can parallel T1; Normal already)
          → T1-1 (vector + BrushSession props)
-         → T1-5 (move/adjust) → T1-2 → T1-3 → T1-4
+         → T1-2 → T1-3 → T1-4 (GPU blend uses T0-12 modes)
          → T1-7 (Procreate import; T1-7-1 can start after T1-1-5; tip stamp after T1-1-3)
-         → T2 (viewport; can parallel T1 after T1-1)
+         → T2-1…T2-5 (viewport; done; can parallel T1 after T1-1)
+         → T2-6 (move/adjust) → T2-7 (Bézier / tilt / tile index)
          → T3 (history; needs T1-1 stroke list)
          → T4 → T5
 ```

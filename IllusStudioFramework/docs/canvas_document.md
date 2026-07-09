@@ -51,7 +51,7 @@ Overlay for inspecting / editing vector stroke geometry. Independent of paint to
 | **Inputs** | `GizmoMode` (`None` \| `Vector`); pointer drag when editable |
 | **State** | `gizmoMode` on editor (present-time overlay; does not mutate pixels until a point edit commits) |
 | **API** | `setGizmoMode(mode)` / `gizmoMode()` (planned) |
-| **Rules** | Overlay is **view chrome** (drawn in present / UI); stroke edits go through canvas-space APIs (`setStrokePoint`, … — see [brush_drawing.md](brush_drawing.md) T1-5) |
+| **Rules** | Overlay is **view chrome** (drawn in present / UI); stroke edits go through canvas-space APIs (`setStrokePoint`, … — see [brush_drawing.md](brush_drawing.md) T2-6) |
 | **v1 out** | Bézier handles, multi-stroke lasso, rotate/scale gizmo, snap guides |
 
 ### Modes
@@ -72,7 +72,7 @@ Overlay for inspecting / editing vector stroke geometry. Independent of paint to
 1. User sets `GizmoMode::Vector` (gizmos visible).
 2. User selects `ToolMode::Pointer` (no paint).
 3. Hit-test nearest point (or segment) in canvas space → drag updates that vertex via `setStrokePoint` (or equivalent).
-4. On drag: invalidate stroke bounds → re-raster that layer (same path as T1-5).
+4. On drag: invalidate stroke bounds → re-raster that layer (same path as T2-6).
 5. If tool is Brush / Eraser, gizmos may still **show** when mode is `Vector`, but **drag does not edit** points (paint/erase wins).
 
 ### Detail
@@ -87,7 +87,7 @@ void setGizmoMode(GizmoMode mode);
 GizmoMode gizmoMode() const;
 ```
 
-- Engine owns mode state + hit-test / `setStrokePoint`; UI may draw the overlay from `copyStrokePolyline` **or** engine may composite a gizmo pass at present — pick one in T1-5 / present work; prefer UI overlay if cheaper for 120Hz.
+- Engine owns mode state + hit-test / `setStrokePoint`; UI may draw the overlay from `copyStrokePolyline` **or** engine may composite a gizmo pass at present — pick one in T2-6 / present work; prefer UI overlay if cheaper for 120Hz.
 - Self-check target: `None` → no edit path; `Vector` + Pointer drag moves a sample; Brush + Vector does not move samples on drag.
 
 ---

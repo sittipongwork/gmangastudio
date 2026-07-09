@@ -39,6 +39,9 @@ public:
     /// Underlying ObjC MTLDevice* (unretained). Null if unavailable.
     void* deviceHandle() const;
 
+    MTL::Device* device() const { return device_; }
+    MTL::CommandQueue* commandQueue() const { return queue_; }
+
     static bool selfCheck();
 
 private:

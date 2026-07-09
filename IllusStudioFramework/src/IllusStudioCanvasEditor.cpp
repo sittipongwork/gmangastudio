@@ -6,8 +6,11 @@
 #include "IllusStudioCanvasEditor.hpp"
 
 #include "math/Blend.hpp"
+#include "render/MetalStrokeRasterizer.hpp"
 #include "render/SoftwareRenderer.hpp"
 #include "render/StrokeRasterizer.hpp"
+
+#include <Metal/Metal.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +26,11 @@ IllusStudioCanvasEditor::IllusStudioCanvasEditor(int32_t width, int32_t height)
     belowCache_.assign(n, 0);
     uploadFull_ = true;
     metalReady_ = metal_.ensureSize(page_.width, page_.height);
+    if (metalReady_ && metal_.device() && metal_.commandQueue()) {
+        gpuCompositeReady_ = gpu_.init(metal_.device(), metal_.commandQueue())
+            && gpu_.ensureSize(page_.width, page_.height);
+        if (gpuCompositeReady_) syncAllGpuLayers();
+    }
     strokeListFor(layers_.activeId());
 }
 
@@ -33,6 +41,9 @@ void IllusStudioCanvasEditor::setBackground(uint8_t r, uint8_t g, uint8_t b, uin
         Layer* layer = layers_.at(i);
         if (layer && layer->isBackground) {
             layer->fillSolid(page_.width, page_.height, {r, g, b, a});
+            if (gpuCompositeReady_) {
+                syncGpuLayer(layer->id, {0, 0, page_.width, page_.height});
+            }
             break;
         }
     }
@@ -81,10 +92,66 @@ const LayerStrokeList* IllusStudioCanvasEditor::strokeListFor(int32_t layerId) c
     return it == strokesByLayer_.end() ? nullptr : &it->second;
 }
 
+void IllusStudioCanvasEditor::syncGpuLayer(int32_t layerId, math::Rect dirty) {
+    if (!gpuCompositeReady_) return;
+    const Layer* layer = layers_.find(layerId);
+    if (!layer || !layer->hasPixels()) {
+        gpu_.clearLayer(layerId);
+        return;
+    }
+    if (dirty.empty()) dirty = {0, 0, page_.width, page_.height};
+    gpu_.uploadLayer(layerId, layer->pixels.data(), page_.width, page_.height, dirty);
+}
+
+void IllusStudioCanvasEditor::syncAllGpuLayers() {
+    if (!gpuCompositeReady_) return;
+    for (int32_t i = 0; i < layers_.count(); ++i) {
+        const Layer* layer = layers_.at(i);
+        if (!layer) continue;
+        if (layer->hasPixels()) {
+            gpu_.uploadLayer(layer->id, layer->pixels.data(), page_.width, page_.height, {0, 0, page_.width, page_.height});
+        } else {
+            gpu_.clearLayer(layer->id);
+        }
+    }
+}
+
+bool IllusStudioCanvasEditor::stampDabGpuOrCpu(
+    uint8_t* cpuPixels,
+    MTL::Texture* gpuTex,
+    float x,
+    float y,
+    float pressure,
+    const BrushPreset& preset,
+    math::Rect& dirty
+) {
+    // Always keep CPU buffer authoritative for selfCheck / export.
+    const bool cpuOk = StrokeRasterizer::stampDab(
+        cpuPixels, page_.width, page_.height, x, y, pressure, preset, dirty
+    );
+    if (cpuOk && gpuTex && gpuCompositeReady_ && gpu_.dabPipeline()) {
+        // ponytail: dual-write CPU+GPU until T1-3-3 proves GPU-only; CPU stays source of truth.
+        MetalStrokeRasterizer::stampDab(
+            metal_.commandQueue(),
+            gpu_.dabPipeline(),
+            gpuTex,
+            page_.width,
+            page_.height,
+            x,
+            y,
+            pressure,
+            preset,
+            dirty
+        );
+    }
+    return cpuOk;
+}
+
 void IllusStudioCanvasEditor::clearActiveLayer() {
     if (Layer* layer = layers_.active()) {
         layer->clearTransparent();
         strokeListFor(layer->id).clear();
+        if (gpuCompositeReady_) gpu_.clearLayer(layer->id);
         markDirty();
     }
 }
@@ -114,6 +181,7 @@ int32_t IllusStudioCanvasEditor::addLayer(const char* name) {
 bool IllusStudioCanvasEditor::removeLayer(int32_t layerId) {
     if (!layers_.remove(layerId)) return false;
     strokesByLayer_.erase(layerId);
+    if (gpuCompositeReady_) gpu_.removeLayer(layerId);
     markDirty();
     return true;
 }
@@ -192,18 +260,40 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
     liveStroke_.presetSnapshot = brushes_.resolvedPreset();
     liveStroke_.bounds.reset();
 
+    // Paint → live overlay (T1-2); erase still hits the layer (dest-out needs backdrop).
+    strokeUsesOverlay_ = liveStroke_.presetSnapshot.mode != BrushMode::Erase;
+    if (strokeUsesOverlay_) {
+        const size_t n = static_cast<size_t>(page_.width) * static_cast<size_t>(page_.height) * 4u;
+        liveOverlay_.assign(n, 0);
+        if (gpuCompositeReady_) gpu_.clearOverlay();
+    } else {
+        liveOverlay_.clear();
+    }
+
     const StrokeSample s = smoothSample(x, y, pressure, liveStroke_.presetSnapshot);
     liveStroke_.samples.push_back(s);
 
     math::Rect localDirty{};
-    StrokeRasterizer::stampDab(
-        *layer, page_.width, page_.height, s.x, s.y, s.pressure, liveStroke_.presetSnapshot, localDirty
-    );
-    liveStroke_.bounds.expand(s.x, s.y, StrokeRasterizer::effectiveRadius(s.pressure, liveStroke_.presetSnapshot) + 1.f);
-    if (!localDirty.empty()) {
-        dirtyRect_.unionWith(localDirty.x, localDirty.y, localDirty.x + localDirty.w - 1, localDirty.y + localDirty.h - 1);
-        dirtyRect_.clipTo(page_.width, page_.height);
+    if (strokeUsesOverlay_) {
+        stampDabGpuOrCpu(
+            liveOverlay_.data(),
+            gpuCompositeReady_ ? gpu_.overlayTexture() : nullptr,
+            s.x,
+            s.y,
+            s.pressure,
+            liveStroke_.presetSnapshot,
+            localDirty
+        );
+    } else {
+        layer->ensurePixels(page_.width, page_.height);
+        // Erase: CPU into layer; sync GPU texture so present stays current.
+        StrokeRasterizer::stampDab(
+            *layer, page_.width, page_.height, s.x, s.y, s.pressure, liveStroke_.presetSnapshot, localDirty
+        );
+        if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     }
+    liveStroke_.bounds.expand(s.x, s.y, StrokeRasterizer::effectiveRadius(s.pressure, liveStroke_.presetSnapshot) + 1.f);
+    noteDirty(localDirty);
 }
 
 void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
@@ -217,31 +307,108 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
     const StrokeSample next = smoothSample(x, y, pressure, liveStroke_.presetSnapshot);
     const StrokeSample& prev = liveStroke_.samples.back();
     math::Rect localDirty{};
-    StrokeRasterizer::stampSegment(
-        *layer,
-        page_.width,
-        page_.height,
-        prev,
-        next,
-        liveStroke_.presetSnapshot,
-        dabCarry_,
-        localDirty,
-        &liveStroke_.bounds
-    );
-    liveStroke_.samples.push_back(next);
-    if (!localDirty.empty()) {
-        dirtyRect_.unionWith(localDirty.x, localDirty.y, localDirty.x + localDirty.w - 1, localDirty.y + localDirty.h - 1);
-        dirtyRect_.clipTo(page_.width, page_.height);
+    if (strokeUsesOverlay_ && !liveOverlay_.empty()) {
+        float gpuCarry = dabCarry_;
+        StrokeRasterizer::stampSegment(
+            liveOverlay_.data(),
+            page_.width,
+            page_.height,
+            prev,
+            next,
+            liveStroke_.presetSnapshot,
+            dabCarry_,
+            localDirty,
+            &liveStroke_.bounds
+        );
+        if (gpuCompositeReady_ && gpu_.overlayTexture() && gpu_.dabPipeline()) {
+            math::Rect gpuDirty{};
+            MetalStrokeRasterizer::stampSegment(
+                metal_.commandQueue(),
+                gpu_.dabPipeline(),
+                gpu_.overlayTexture(),
+                page_.width,
+                page_.height,
+                prev,
+                next,
+                liveStroke_.presetSnapshot,
+                gpuCarry,
+                gpuDirty,
+                nullptr
+            );
+            if (!gpuDirty.empty()) {
+                localDirty.unionWith(
+                    gpuDirty.x, gpuDirty.y, gpuDirty.x + gpuDirty.w - 1, gpuDirty.y + gpuDirty.h - 1
+                );
+            }
+        }
+    } else {
+        StrokeRasterizer::stampSegment(
+            *layer,
+            page_.width,
+            page_.height,
+            prev,
+            next,
+            liveStroke_.presetSnapshot,
+            dabCarry_,
+            localDirty,
+            &liveStroke_.bounds
+        );
+        if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     }
+    liveStroke_.samples.push_back(next);
+    noteDirty(localDirty);
 }
 
 void IllusStudioCanvasEditor::endStroke() {
     if (!stroking_) return;
     stroking_ = false;
     haveSmoothed_ = false;
-    if (liveStroke_.samples.empty()) return;
-    strokeListFor(liveStroke_.layerId).strokes.push_back(std::move(liveStroke_));
+    const int32_t layerId = liveStroke_.layerId;
+    math::Rect syncDirty = dirtyRect_;
+    if (strokeUsesOverlay_) {
+        mergeLiveOverlayIntoLayer();
+        clearLiveOverlay();
+    }
+    strokeUsesOverlay_ = false;
+    if (!liveStroke_.samples.empty()) {
+        strokeListFor(liveStroke_.layerId).strokes.push_back(std::move(liveStroke_));
+    }
     liveStroke_ = Stroke{};
+    if (gpuCompositeReady_) {
+        if (syncDirty.empty()) syncDirty = {0, 0, page_.width, page_.height};
+        syncGpuLayer(layerId, syncDirty);
+    }
+}
+
+void IllusStudioCanvasEditor::noteDirty(const math::Rect& local) {
+    if (local.empty()) return;
+    dirtyRect_.unionWith(local.x, local.y, local.x + local.w - 1, local.y + local.h - 1);
+    dirtyRect_.clipTo(page_.width, page_.height);
+    dirtyTiles_.markRect(local, page_.width, page_.height);
+}
+
+void IllusStudioCanvasEditor::clearLiveOverlay() {
+    liveOverlay_.clear();
+    if (gpuCompositeReady_) gpu_.clearOverlay();
+}
+
+void IllusStudioCanvasEditor::mergeLiveOverlayIntoLayer() {
+    if (liveOverlay_.empty()) return;
+    Layer* layer = layers_.find(liveStroke_.layerId);
+    if (!layer) return;
+    layer->ensurePixels(page_.width, page_.height);
+    math::Rect r = dirtyRect_;
+    if (r.empty()) {
+        r = {0, 0, page_.width, page_.height};
+    }
+    math::blendLayerRect(layer->pixels.data(), liveOverlay_.data(), page_.width, r, 1.f);
+    // Layer changed — below-cache still valid; re-composite active+above for dirty.
+    noteDirty(r);
+}
+
+void IllusStudioCanvasEditor::blendLiveOverlayIntoComposite(const math::Rect& rect) {
+    if (liveOverlay_.empty() || rect.empty()) return;
+    math::blendLayerRect(composite_.data(), liveOverlay_.data(), page_.width, rect, 1.f);
 }
 
 int32_t IllusStudioCanvasEditor::strokeCountOnLayer(int32_t layerId) const {
@@ -293,6 +460,47 @@ bool IllusStudioCanvasEditor::copyLayerThumbnailRGBA(
 }
 
 void* IllusStudioCanvasEditor::presentMetalTexture() {
+    // T1-4: GPU stack blend when compositor is ready; CPU composite remains for compositePixels().
+    if (gpuCompositeReady_) {
+        const bool needSync = uploadFull_ || fullDirty_ || !dirtyRect_.empty() || !uploadRect_.empty();
+        if (needSync) {
+            math::Rect region = dirtyRect_;
+            if (!uploadRect_.empty()) {
+                if (region.empty()) region = uploadRect_;
+                else {
+                    region.unionWith(
+                        uploadRect_.x,
+                        uploadRect_.y,
+                        uploadRect_.x + uploadRect_.w - 1,
+                        uploadRect_.y + uploadRect_.h - 1
+                    );
+                }
+            }
+            if (uploadFull_ || fullDirty_ || region.empty()) {
+                syncAllGpuLayers();
+            } else {
+                // Sync layers that may have changed: active (+ all if full safer).
+                // ponytail: dirty rect may span multiple layers after reorder — sync all when unsure.
+                syncAllGpuLayers();
+            }
+            if (stroking_ && strokeUsesOverlay_ && !liveOverlay_.empty()) {
+                math::Rect o = region.empty() ? math::Rect{0, 0, page_.width, page_.height} : region;
+                gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, o);
+            }
+            uploadRect_.setEmpty();
+            uploadFull_ = false;
+            // Keep CPU composite warm for export / selfCheck without forcing every present.
+            flushDirtyComposite();
+        }
+        void* tex = gpu_.present(
+            layers_,
+            layers_.activeId(),
+            stroking_ && strokeUsesOverlay_
+        );
+        metalReady_ = tex != nullptr;
+        return tex;
+    }
+
     const bool needUpload = uploadFull_ || fullDirty_ || !dirtyRect_.empty() || !uploadRect_.empty() || !metal_.valid();
     if (!needUpload) {
         return metal_.textureHandle();
@@ -346,36 +554,62 @@ void IllusStudioCanvasEditor::flushDirtyComposite() {
         SoftwareRenderer::composite(page_, layers_, composite_);
         fullDirty_ = false;
         dirtyRect_.setEmpty();
+        dirtyTiles_.clear();
         belowValid_ = false;
         uploadFull_ = true;
+        if (stroking_ && strokeUsesOverlay_ && !liveOverlay_.empty()) {
+            blendLiveOverlayIntoComposite({0, 0, page_.width, page_.height});
+        }
         return;
     }
-    if (dirtyRect_.empty()) return;
+    if (dirtyRect_.empty()) {
+        // Still need overlay refresh while stroking if tiles marked.
+        if (!(stroking_ && strokeUsesOverlay_ && !dirtyTiles_.empty())) return;
+    }
 
     const int32_t activeIndex = layers_.indexOf(layers_.activeId());
     if (!belowValid_ || belowActiveIndex_ != activeIndex) {
         ensureBelowCache();
+        if (stroking_ && strokeUsesOverlay_ && !liveOverlay_.empty()) {
+            blendLiveOverlayIntoComposite({0, 0, page_.width, page_.height});
+        }
         return;
     }
-    if (uploadRect_.empty()) uploadRect_ = dirtyRect_;
+
+    math::Rect region = dirtyRect_;
+    if (region.empty()) {
+        region = dirtyTiles_.bounds(page_.width, page_.height);
+    }
+    if (region.empty()) return;
+
+    if (uploadRect_.empty()) uploadRect_ = region;
     else {
         uploadRect_.unionWith(
-            dirtyRect_.x,
-            dirtyRect_.y,
-            dirtyRect_.x + dirtyRect_.w - 1,
-            dirtyRect_.y + dirtyRect_.h - 1
+            region.x,
+            region.y,
+            region.x + region.w - 1,
+            region.y + region.h - 1
         );
     }
-    SoftwareRenderer::compositeFromBelow(page_, layers_, activeIndex, belowCache_, composite_, dirtyRect_);
+    SoftwareRenderer::compositeFromBelow(page_, layers_, activeIndex, belowCache_, composite_, region);
+    if (stroking_ && strokeUsesOverlay_ && !liveOverlay_.empty()) {
+        blendLiveOverlayIntoComposite(region);
+    }
     dirtyRect_.setEmpty();
+    dirtyTiles_.clear();
 }
 
 void IllusStudioCanvasEditor::markDirty() {
     fullDirty_ = true;
     belowValid_ = false;
     dirtyRect_.setEmpty();
+    dirtyTiles_.clear();
     uploadFull_ = true;
     uploadRect_.setEmpty();
+    clearLiveOverlay();
+    stroking_ = false;
+    strokeUsesOverlay_ = false;
+    if (gpuCompositeReady_) syncAllGpuLayers();
 }
 
 bool IllusStudioCanvasEditor::selfCheck() {
@@ -392,6 +626,30 @@ bool IllusStudioCanvasEditor::selfCheck() {
         const uint8_t* p = editor.compositePixels();
         const size_t i = (16u * 32u + 16u) * 4u;
         if (p[i] == 255 && p[i + 1] == 255 && p[i + 2] == 255) return false;
+        if (editor.metalAvailable() && editor.presentMetalTexture() == nullptr) return false;
+    }
+
+    // T1-2: live overlay merges into layer on endStroke (pixels change only after end).
+    {
+        IllusStudioCanvasEditor editor(32, 32);
+        Layer* layer = editor.layers().active();
+        if (!layer) return false;
+        editor.beginStroke(16, 16, 1);
+        // During stroke, layer pixels stay clean for paint-overlay path.
+        if (layer->hasPixels()) {
+            const uint8_t* px = layer->pixelAt(16, 16, 32);
+            if (px[3] > 8) return false;
+        }
+        editor.endStroke();
+        if (!layer->hasPixels()) return false;
+        if (layer->pixelAt(16, 16, 32)[3] < 10) return false;
+    }
+
+    // T1-3 / T1-4: GPU present path returns a texture when Metal is available.
+    {
+        IllusStudioCanvasEditor editor(16, 16);
+        editor.beginStroke(8, 8, 1);
+        editor.endStroke();
         if (editor.metalAvailable() && editor.presentMetalTexture() == nullptr) return false;
     }
 

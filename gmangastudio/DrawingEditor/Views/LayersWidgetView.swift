@@ -261,6 +261,7 @@ struct LayersWidgetView: View {
 
     private func openContextMenu(for layer: LayerListItem) {
         guard !layer.isBackground else { return }
+        onSelect(layer.id)
         let midY: CGFloat
         if let paintIndex = paintLayers.firstIndex(where: { $0.id == layer.id }) {
             midY = headerHeight + CGFloat(paintIndex) * strideY + rowHeight * 0.5

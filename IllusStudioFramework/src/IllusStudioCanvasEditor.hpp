@@ -8,6 +8,8 @@
 #include "document/PageSettings.hpp"
 #include "layers/LayerStack.hpp"
 #include "math/Rect.hpp"
+#include "math/TileGrid.hpp"
+#include "render/LayerCompositor.hpp"
 #include "render/MetalRenderer.hpp"
 #include "strokes/Stroke.hpp"
 #include "tools/BrushLibrary.hpp"
@@ -16,6 +18,10 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+
+namespace MTL {
+class Texture;
+}
 
 namespace illus {
 
@@ -45,10 +51,9 @@ public:
     void clearActiveLayer();
     void clearAll(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
-    // Layer ops that also keep stroke lists coherent.
     int32_t addLayer(const char* name);
     bool removeLayer(int32_t layerId);
-    int32_t duplicateLayer(int32_t layerId); // -1 on fail
+    int32_t duplicateLayer(int32_t layerId);
     bool moveLayer(int32_t layerId, int32_t toIndex);
     bool mergeLayerDown(int32_t srcId, int32_t dstId);
 
@@ -58,14 +63,10 @@ public:
 
     int32_t strokeCountOnLayer(int32_t layerId) const;
 
-    /// Composite into CPU cache; pointer valid until next mutating call.
     const uint8_t* compositePixels();
 
-    /// Nearest-neighbor downsample of one layer into RGBA8 `out` (outW*outH*4).
-    /// Lazy/empty layer → transparent. Returns false if invalid args / missing layer.
     bool copyLayerThumbnailRGBA(int32_t layerId, int32_t outW, int32_t outH, uint8_t* outRGBA, int32_t outByteCount) const;
 
-    /// Flush composite, upload dirty region to Metal, return MTLTexture* (or null).
     void* presentMetalTexture();
     void* metalDevice() const { return metal_.deviceHandle(); }
     bool metalAvailable() const { return metalReady_; }
@@ -80,6 +81,21 @@ private:
     const LayerStrokeList* strokeListFor(int32_t layerId) const;
     void ensureBelowCache();
     void flushDirtyComposite();
+    void noteDirty(const math::Rect& local);
+    void clearLiveOverlay();
+    void mergeLiveOverlayIntoLayer();
+    void blendLiveOverlayIntoComposite(const math::Rect& rect);
+    void syncGpuLayer(int32_t layerId, math::Rect dirty);
+    void syncAllGpuLayers();
+    bool stampDabGpuOrCpu(
+        uint8_t* cpuPixels,
+        MTL::Texture* gpuTex,
+        float x,
+        float y,
+        float pressure,
+        const BrushPreset& preset,
+        math::Rect& dirty
+    );
     StrokeSample smoothSample(float x, float y, float pressure, const BrushPreset& preset);
 
     PageSettings page_;
@@ -91,21 +107,27 @@ private:
 
     std::vector<uint8_t> composite_;
     std::vector<uint8_t> belowCache_;
+    /// T1-2: live paint accumulates here; merged into layer on endStroke.
+    std::vector<uint8_t> liveOverlay_;
     bool belowValid_ = false;
     int32_t belowActiveIndex_ = -1;
     bool fullDirty_ = true;
     math::Rect dirtyRect_{};
     math::Rect uploadRect_{};
     bool uploadFull_ = true;
+    math::TileGrid dirtyTiles_;
 
     bool stroking_ = false;
+    bool strokeUsesOverlay_ = false; // paint → overlay; erase → layer
     Stroke liveStroke_;
     float dabCarry_ = 0.f;
     bool haveSmoothed_ = false;
     StrokeSample smoothed_{};
 
     MetalRenderer metal_;
+    LayerCompositor gpu_;
     bool metalReady_ = false;
+    bool gpuCompositeReady_ = false;
 };
 
 } // namespace illus

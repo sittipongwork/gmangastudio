@@ -207,7 +207,7 @@ continueStroke(x, y, pressure)
 endStroke()
 ```
 
-Tilt: add `beginStrokeEx` / `continueStrokeEx` when UI is ready — do not block **T1-1** on tilt (**T1-6-2**).
+Tilt: add `beginStrokeEx` / `continueStrokeEx` when UI is ready — do not block **T1-1** on tilt (**T2-7-2**).
 
 ---
 
@@ -293,10 +293,10 @@ LayerStrokeList {
 | Move / adjust | Mutate that stroke’s samples/path; recompute bounds | Invalidate old∪new bounds → re-raster affected tiles |
 | Undo | Remove last stroke (or apply inverse / un-transform) | Invalidate stroke bounds → re-raster affected tiles from remaining strokes |
 
-### Curve fitting (optional in T1-1, recommended in T1-6)
+### Curve fitting (optional in T1-1, recommended in T2-7)
 
 - **T1-1 minimum:** store dense `StrokeSample[]`; rasterizer walks samples with dab spacing (same as today).
-- **T1-6-1:** on `endStroke`, fit cubics (`math/` Bézier) for storage + SVG; keep samples if fit error is high.
+- **T2-7-1:** on `endStroke`, fit cubics (`math/` Bézier) for storage + SVG; keep samples if fit error is high.
 - Fitting must be **lossy compression of input**, not a second source of truth that diverges from what was painted — rasterize from the same representation you store, or re-raster from samples after fit only if visual delta is within epsilon (self-check).
 
 ### Eraser as vector
@@ -344,7 +344,7 @@ Commit          recompute bounds; invalidate raster; history records TransformSt
 
 Do **not** expose a document-wide “all strokes” dump in v1 — always pass `layerId`.
 
-**Live preview while dragging:** either (a) mutate vector + cheap re-raster of dirty tiles each move event, or (b) UI draws a ghost polyline in Swift and calls `commitStrokeTransform` on finger-up. Prefer (a) once tile re-raster is cheap; (b) is fine for **T1-5**.
+**Live preview while dragging:** either (a) mutate vector + cheap re-raster of dirty tiles each move event, or (b) UI draws a ghost polyline in Swift and calls `commitStrokeTransform` on finger-up. Prefer (a) once tile re-raster is cheap; (b) is fine for **T2-6**.
 
 ---
 
@@ -697,8 +697,8 @@ Wire through `IllusStudioCanvasEditor`; expose only what Swift needs on `CanvasE
 | Live overlay + dirty tiles | **T1-2** |
 | Metal compute rasterizer | **T1-3** |
 | GPU layer composite | **T1-4** |
-| Easy move / adjust line | **T1-5** |
-| Bézier fit / tilt / tile index | **T1-6** |
+| Easy move / adjust line | **T2-6** |
+| Bézier fit / tilt / tile index | **T2-7** |
 | Procreate `.brush` / `.brushset` import | **T1-7** |
 
 Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
@@ -822,7 +822,7 @@ Do **not** keep a parallel “pixels-only” stroke path after **T1-1** — one 
 - Layer masks / groups  
 - Multi-stroke lasso transform / document-wide vector dump  
 - Pressure/tilt re-paint while moving (v1 move is geometric translate; brush params stay on `presetSnapshot`)  
-- Full Illustrator-grade Bézier toolset (**T1-5** = polyline move + point adjust; rich curve UI later)  
+- Full Illustrator-grade Bézier toolset (**T2-6** = polyline move + point adjust; rich curve UI later)  
 - Photoshop `.abr` import (Procreate can import ABR; we can add later as **T1-8**)  
 - Shipping or redistributing Procreate’s default brush packs  
 - Claiming full Procreate brush-engine parity  
@@ -834,4 +834,4 @@ Do **not** keep a parallel “pixels-only” stroke path after **T1-1** — one 
 
 Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` import** (**T1-7**) unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone.
 
-Ship order and checkboxes: [ROADMAP.md](ROADMAP.md) — **T1-1** (incl. session props) → **T1-5** → **T1-2** / **T1-3** / **T1-4** → **T1-7** (import; tip stamp can follow T1-1).
+Ship order and checkboxes: [ROADMAP.md](ROADMAP.md) — **T1-1** (incl. session props) → **T1-2** / **T1-3** / **T1-4** → **T1-7** (import; tip stamp can follow T1-1) → **T2-6** / **T2-7**.
