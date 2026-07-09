@@ -1,0 +1,13 @@
+# Build artifacts — keep out of agent context
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+.build/
+
+# Large / generated
+*.dSYM
+*.ipa
+*.png
+!gmangastudio/Assets.xcassets/**/*.png

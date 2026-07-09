@@ -13,5 +13,6 @@ struct gmangastudioApp: App {
         WindowGroup {
             ContentView()
         }
+        .defaultSize(width: 1920, height: 1080)
     }
 }
