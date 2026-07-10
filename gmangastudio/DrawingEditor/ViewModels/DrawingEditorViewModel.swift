@@ -35,13 +35,15 @@ final class DrawingEditorViewModel {
     private(set) var isLayersVisible = false
     private(set) var brushSets: [BrushLibrarySetItem] = []
     private(set) var brushPresets: [BrushLibraryPresetItem] = []
-    private(set) var selectedBrushSetIndex: Int32 = 0
-    private(set) var selectedBrushPresetIndex: Int32 = 0
+    private(set) var selectedBrushSetIndex: Int32 = 1 // Inking (default paint = ink.round)
+    private(set) var selectedBrushPresetIndex: Int32 = 1 // ink.round within Inking
     private(set) var layers: [LayerListItem] = []
     private(set) var activeLayerId: Int32 = 0
     /// Bumps when active layer pixels change (stroke / clear) so thumbs refresh.
     private var layerContentRevision: [Int32: Int] = [:]
     var isBrushImportPresented = false
+    /// True while a Procreate package is being imported (shows progress on Brush Library).
+    private(set) var isBrushImporting = false
 
     /// Brush edit options (sidebar).
     var brushColor: Color = Color(.sRGB, red: 20 / 255, green: 20 / 255, blue: 20 / 255, opacity: 1)
@@ -262,29 +264,37 @@ final class DrawingEditorViewModel {
 
     func importBrushPackage(from url: URL) {
         noteUserActivity()
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer {
-            if accessed { url.stopAccessingSecurityScopedResource() }
-        }
-        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
-        var ed = editor
-        var brushCount: Int32 = 0
-        let name = url.lastPathComponent
-        let setId = data.withUnsafeBytes { raw -> Int32 in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
-            return ed.importBrushPackageBytes(
-                base,
-                Int32(data.count),
-                .Auto,
-                name,
-                &brushCount
-            )
-        }
-        editor = ed
-        guard setId >= 0 else { return }
-        reloadBrushLibrary()
-        if let idx = brushSets.last(where: { $0.isImported })?.id {
-            selectBrushSet(idx)
+        guard !isBrushImporting else { return }
+        isBrushImporting = true
+        // Yield so Brush Library can paint ProgressView before the sync import blocks MainActor.
+        Task { @MainActor in
+            // ponytail: one frame for overlay; upgrade to C++ progress callback if import stays multi-second.
+            try? await Task.sleep(for: .milliseconds(16))
+            defer { isBrushImporting = false }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+            guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
+            var ed = editor
+            var brushCount: Int32 = 0
+            let name = url.lastPathComponent
+            let setId = data.withUnsafeBytes { raw -> Int32 in
+                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
+                return ed.importBrushPackageBytes(
+                    base,
+                    Int32(data.count),
+                    .Auto,
+                    name,
+                    &brushCount
+                )
+            }
+            editor = ed
+            guard setId >= 0 else { return }
+            reloadBrushLibrary()
+            if let idx = brushSets.last(where: { $0.isImported })?.id {
+                selectBrushSet(idx)
+            }
         }
     }
 
@@ -462,16 +472,17 @@ final class DrawingEditorViewModel {
         syncViewportFromEditor()
     }
 
-    func pointerChanged(at point: CGPoint) {
+    func pointerChanged(at point: CGPoint, pressure: Float = 1) {
         noteUserActivity()
         guard mode != .pointer, !isEyedropperActive else { return }
+        let p = min(max(pressure, 0.05), 1)
         var ed = editor
         if isStroking {
-            ed.continueStroke(Float(point.x), Float(point.y), 1)
+            ed.continueStroke(Float(point.x), Float(point.y), p)
         } else {
             isStroking = true
             recordBrushColorHistory()
-            ed.beginStroke(Float(point.x), Float(point.y), 1)
+            ed.beginStroke(Float(point.x), Float(point.y), p)
         }
         editor = ed
     }
@@ -542,7 +553,8 @@ final class DrawingEditorViewModel {
         return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
 
-    private static func rgba8(from color: Color) -> (UInt8, UInt8, UInt8, UInt8) {
+    // ponytail: pure Color↔hex; nonisolated so UserDefaults load/save can call them off MainActor isolation.
+    private nonisolated static func rgba8(from color: Color) -> (UInt8, UInt8, UInt8, UInt8) {
         #if os(macOS)
         let ns = NSColor(color)
         guard let rgb = ns.usingColorSpace(.sRGB) else { return (20, 20, 20, 255) }
@@ -575,12 +587,12 @@ final class DrawingEditorViewModel {
         UserDefaults.standard.set(hexes, forKey: colorHistoryKey)
     }
 
-    private static func hexFromColor(_ color: Color) -> String {
+    private nonisolated static func hexFromColor(_ color: Color) -> String {
         let c = rgba8(from: color)
         return String(format: "%02X%02X%02X%02X", c.0, c.1, c.2, c.3)
     }
 
-    private static func colorFromHex(_ hex: String) -> Color? {
+    private nonisolated static func colorFromHex(_ hex: String) -> Color? {
         guard hex.count == 8, let v = UInt32(hex, radix: 16) else { return nil }
         let r = Double((v >> 24) & 0xFF) / 255
         let g = Double((v >> 16) & 0xFF) / 255
@@ -627,12 +639,14 @@ final class DrawingEditorViewModel {
         var items: [BrushLibraryPresetItem] = []
         for i in 0..<count {
             let name = String(cString: ed.brushPresetNameInSet(selectedBrushSetIndex, i))
-            let weight: CGFloat = name.contains("air") || name.contains("soft") ? 8 : 4
+            let lineW = ed.brushPresetLineWidthInSet(selectedBrushSetIndex, i)
+            let weight = CGFloat(min(10, max(1.5, Double(lineW) * 0.2)))
             items.append(.init(
                 id: i,
                 name: name.isEmpty ? "Brush \(i)" : name,
                 strokeWeight: weight,
-                approximated: ed.brushPresetApproximated(selectedBrushSetIndex, i)
+                approximated: ed.brushPresetApproximated(selectedBrushSetIndex, i),
+                preview: makeBrushPresetPreview(editor: ed, setIndex: selectedBrushSetIndex, presetIndex: i)
             ))
         }
         brushPresets = items
@@ -641,12 +655,45 @@ final class DrawingEditorViewModel {
         }
     }
 
+    /// Procreate QuickLook or engine tip/grain strip (~180×48).
+    private func makeBrushPresetPreview(
+        editor ed: illus.CanvasEditor,
+        setIndex: Int32,
+        presetIndex: Int32
+    ) -> Image? {
+        let outW: Int32 = 180
+        let outH: Int32 = 48
+        let byteCount = Int(outW * outH * 4)
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        let ok = bytes.withUnsafeMutableBufferPointer { buf in
+            ed.copyBrushPresetPreviewRGBA(
+                setIndex, presetIndex, outW, outH, buf.baseAddress, Int32(byteCount)
+            )
+        }
+        guard ok else { return nil }
+        // Skip empty strips (all transparent).
+        guard bytes.contains(where: { $0 > 0 }) else { return nil }
+
+#if os(macOS)
+        guard let cgImage = Self.cgImageRGBA(bytes: bytes, width: Int(outW), height: Int(outH)) else { return nil }
+        let ns = NSImage(cgImage: cgImage, size: NSSize(width: Int(outW), height: Int(outH)))
+        return Image(nsImage: ns)
+#else
+        guard let cgImage = Self.cgImageRGBA(bytes: bytes, width: Int(outW), height: Int(outH)) else { return nil }
+        let ui = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+        return Image(uiImage: ui)
+#endif
+    }
+
     private func iconForBrushSet(_ name: String, imported: Bool) -> String {
         if imported { return "square.and.arrow.down.on.square" }
         let n = name.lowercased()
+        if n.contains("sketch") { return "pencil" }
         if n.contains("ink") { return "pencil.tip" }
-        if n.contains("air") { return "cloud" }
+        if n.contains("draw") { return "scribble.variable" }
+        if n.contains("paint") { return "paintbrush.pointed" }
         if n.contains("erase") { return "eraser" }
+        if n.contains("user") { return "person" }
         return "paintbrush.pointed"
     }
 

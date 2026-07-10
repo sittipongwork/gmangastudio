@@ -129,6 +129,7 @@ private:
     bool strokeUsesOverlay_ = false; // paint → overlay; erase → layer
     Stroke liveStroke_;
     float dabCarry_ = 0.f;
+    float strokeDistPx_ = 0.f;
     bool haveSmoothed_ = false;
     StrokeSample smoothed_{};
 

@@ -179,7 +179,7 @@ struct CanvasMetalView: NSViewRepresentable {
     var highPerformancePresent: Bool = true
     var presentFps: Int = 72
     var eyedropperActive: Bool = false
-    var onDragChanged: (CGPoint) -> Void
+    var onDragChanged: (CGPoint, Float) -> Void
     var onDragEnded: () -> Void
     var onPan: (CGSize, CGSize) -> Void
     var onZoom: (CGFloat, CGPoint, CGSize) -> Void
@@ -302,7 +302,7 @@ struct CanvasMetalView: NSViewRepresentable {
             }
             switch g.state {
             case .began, .changed:
-                parent.onDragChanged(p)
+                parent.onDragChanged(p, Self.pointerPressure())
             case .ended, .cancelled:
                 parent.onDragEnded()
             default:
@@ -346,6 +346,15 @@ struct CanvasMetalView: NSViewRepresentable {
                 Float(viewSize.width), Float(viewSize.height)
             )
             return CGPoint(x: CGFloat(x), y: CGFloat(y))
+        }
+
+        /// Tablet/Pencil pressure when present; mouse → 1.
+        private static func pointerPressure() -> Float {
+            guard let e = NSApp.currentEvent else { return 1 }
+            if e.subtype == .tabletPoint || e.pressure > 0 {
+                return max(Float(e.pressure), 0.05)
+            }
+            return 1
         }
     }
 }
@@ -403,7 +412,7 @@ struct CanvasMetalView: UIViewRepresentable {
     var highPerformancePresent: Bool = true
     var presentFps: Int = 72
     var eyedropperActive: Bool = false
-    var onDragChanged: (CGPoint) -> Void
+    var onDragChanged: (CGPoint, Float) -> Void
     var onDragEnded: () -> Void
     var onPan: (CGSize, CGSize) -> Void
     var onZoom: (CGFloat, CGPoint, CGSize) -> Void
@@ -494,7 +503,8 @@ struct CanvasMetalView: UIViewRepresentable {
             }
             switch g.state {
             case .began, .changed:
-                parent.onDragChanged(p)
+                // ponytail: Pencil force needs view-level touchesMoved; finger → 1.
+                parent.onDragChanged(p, 1)
             case .ended, .cancelled:
                 parent.onDragEnded()
             default:

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 
 namespace illus {
 
@@ -253,6 +254,7 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
     ensureBelowCache();
     haveSmoothed_ = false;
     dabCarry_ = 0.f;
+    strokeDistPx_ = 0.f;
 
     liveStroke_ = Stroke{};
     liveStroke_.id = nextStrokeId_++;
@@ -271,6 +273,9 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
 
     math::Rect localDirty{};
     layer->ensurePixels(page_.width, page_.height);
+    const BrushPreset dab = StrokeRasterizer::withStrokeDynamics(
+        liveStroke_.presetSnapshot, s.pressure, strokeDistPx_
+    );
     StrokeRasterizer::stampDab(
         *layer,
         page_.width,
@@ -278,12 +283,12 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
         s.x,
         s.y,
         s.pressure,
-        liveStroke_.presetSnapshot,
+        dab,
         localDirty,
         &brushes_.assets()
     );
     if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
-    liveStroke_.bounds.expand(s.x, s.y, StrokeRasterizer::effectiveRadius(s.pressure, liveStroke_.presetSnapshot) + 1.f);
+    liveStroke_.bounds.expand(s.x, s.y, StrokeRasterizer::effectiveRadius(s.pressure, dab) + 1.f);
     noteDirty(localDirty);
 }
 
@@ -307,6 +312,7 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
         next,
         liveStroke_.presetSnapshot,
         dabCarry_,
+        strokeDistPx_,
         localDirty,
         &liveStroke_.bounds,
         &brushes_.assets()
@@ -320,6 +326,8 @@ void IllusStudioCanvasEditor::endStroke() {
     if (!stroking_) return;
     stroking_ = false;
     haveSmoothed_ = false;
+    dabCarry_ = 0.f;
+    strokeDistPx_ = 0.f;
     const int32_t layerId = liveStroke_.layerId;
     math::Rect syncDirty = dirtyRect_;
     if (strokeUsesOverlay_) {
@@ -567,14 +575,18 @@ void IllusStudioCanvasEditor::markDirty() {
 }
 
 bool IllusStudioCanvasEditor::selfCheck() {
-    if (!SoftwareRenderer::selfCheck()) return false;
-    if (!MetalRenderer::selfCheck()) return false;
+    auto fail = [](const char* step) {
+        std::fprintf(stderr, "IllusStudioCanvasEditor::selfCheck failed: %s\n", step);
+        return false;
+    };
+    if (!SoftwareRenderer::selfCheck()) return fail("SoftwareRenderer");
+    if (!MetalRenderer::selfCheck()) return fail("MetalRenderer");
     {
         // GPU compositor stacking (top→down / index 0 front).
         IllusStudioCanvasEditor probe(4, 4);
         if (probe.metalAvailable() && probe.metal_.device() && probe.metal_.commandQueue()) {
             if (!LayerCompositor::selfCheck(probe.metal_.device(), probe.metal_.commandQueue())) {
-                return false;
+                return fail("LayerCompositor");
             }
         }
     }
@@ -868,10 +880,10 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (!layer || !layer->hasPixels()) return false;
         const uint8_t* c = layer->pixelAt(32, 32, 64);
         // Center of overlapping dabs: solid-ish lime, not muddy/dark.
-        if (c[1] < 180 || c[0] > 120 || c[2] > 120 || c[3] < 200) return false;
+        if (c[1] < 180 || c[0] > 120 || c[2] > 120 || c[3] < 200) return fail("stamp-quality-center");
         const uint8_t* edge = layer->pixelAt(32, 18, 64);
         // Soft AA fringe may be partial alpha but RGB must stay lime-ish when present.
-        if (edge[3] > 20 && (edge[1] < edge[0] || edge[1] < 100)) return false;
+        if (edge[3] > 20 && (edge[1] < edge[0] || edge[1] < 100)) return fail("stamp-quality-edge");
     }
 
     // Cross-stroke overlap: second soft stroke over first must stay lime (not dark/noisy).
@@ -890,12 +902,12 @@ bool IllusStudioCanvasEditor::selfCheck() {
         editor.continueStroke(32, 54, 1);
         editor.endStroke();
         Layer* layer = editor.layers().active();
-        if (!layer || !layer->hasPixels()) return false;
+        if (!layer || !layer->hasPixels()) return fail("cross-stroke-layer");
         const uint8_t* cross = layer->pixelAt(32, 32, 64);
-        if (cross[1] < 180 || cross[0] > 120 || cross[2] > 120 || cross[3] < 80) return false;
+        if (cross[1] < 180 || cross[0] > 120 || cross[2] > 120 || cross[3] < 80) return fail("cross-stroke-color");
     }
 
-    // T1-7: fixture .brush import → set + tip texture stored; stamp is procedural round for now.
+    // T1-7: fixture .brush import → set + tip texture; tip stamp paints coverage.
     {
         IllusStudioCanvasEditor editor(48, 48);
         const int32_t setsBefore = editor.brushes().setCount();
@@ -907,26 +919,105 @@ bool IllusStudioCanvasEditor::selfCheck() {
             BrushPackageKind::Brush,
             "fixture.brush"
         );
-        if (!imported.ok || imported.brushCount < 1) return false;
-        if (editor.brushes().setCount() != setsBefore + 1) return false;
+        if (!imported.ok || imported.brushCount < 1) return fail("import-ok");
+        if (editor.brushes().setCount() != setsBefore + 1) return fail("import-set-count");
         const int32_t setIndex = editor.brushes().indexOfSetId(imported.setId);
-        if (setIndex < 0) return false;
-        if (editor.brushes().setSource(setIndex) != BrushSource::ImportedProcreate) return false;
+        if (setIndex < 0) return fail("import-set-index");
+        if (editor.brushes().setSource(setIndex) != BrushSource::ImportedProcreate) return fail("import-source");
         const int32_t presetId = editor.brushes().presetIdInSet(setIndex, 0);
         const BrushPreset* p = editor.brushes().find(presetId);
-        if (!p || p->tipTextureId < 0) return false;
-        if (!editor.brushes().assets().find(p->tipTextureId)) return false;
-        if (std::abs(p->lineWidthPx - 24.f) > 0.5f) return false;
-        if (!editor.brushes().setActivePreset(presetId)) return false;
+        if (!p || p->tipTextureId < 0) return fail("import-tip-id");
+        if (!editor.brushes().assets().find(p->tipTextureId)) return fail("import-tip-asset");
+        if (std::abs(p->lineWidthPx - 24.f) > 0.5f) return fail("import-linewidth");
+        if (!editor.brushes().setActivePreset(presetId)) return fail("import-activate");
         editor.brushes().session().color = math::RGBA{50, 220, 40, 255};
         editor.beginStroke(24, 24, 1);
         editor.endStroke();
         Layer* layer = editor.layers().active();
-        if (!layer || !layer->hasPixels()) return false;
+        if (!layer || !layer->hasPixels()) return fail("import-layer");
         const uint8_t* px = layer->pixelAt(24, 24, 48);
-        if (px[3] < 10) return false;
-        // Procedural round (not tip grain): center must be bright green, not dark/noisy.
-        if (px[1] < 150 || px[0] > 140) return false;
+        if (px[3] < 10) return fail("import-stamp-alpha");
+
+        // List preview: QuickLook or tip strip must produce coverage.
+        std::vector<uint8_t> preview(180 * 48 * 4);
+        if (!editor.brushes().copyPresetPreviewRGBA(
+                setIndex, 0, 180, 48, preview.data(), static_cast<int32_t>(preview.size())
+            )) {
+            return fail("import-preview-copy");
+        }
+        int covered = 0;
+        for (size_t i = 3; i < preview.size(); i += 4) {
+            if (preview[i] > 20) ++covered;
+        }
+        if (covered < 30) return fail("import-preview-coverage");
+    }
+
+    // Grain must punch holes (not paint solid) when grainDepth is high.
+    {
+        IllusStudioCanvasEditor editor(64, 32);
+        std::vector<uint8_t> tip(16 * 16 * 4, 255);
+        std::vector<uint8_t> grain(16 * 16 * 4, 255);
+        // 4px stripes — 1px stripes blur to mid-gray under bilinear at pixel centers.
+        for (int y = 0; y < 16; ++y) {
+            for (int x = 0; x < 16; ++x) {
+                uint8_t* g = grain.data() + (static_cast<size_t>(y) * 16u + static_cast<size_t>(x)) * 4u;
+                const uint8_t v = ((x / 4) % 2 == 0) ? 255 : 0;
+                g[0] = g[1] = g[2] = v;
+                g[3] = 255;
+            }
+        }
+        BrushPreset p;
+        p.lineWidthPx = 20.f;
+        p.flow = 0.3f;
+        p.grainDepth = 1.f;
+        p.grainScale = 1.f;
+        p.color = math::RGBA{0, 0, 0, 255};
+        p.tipTextureId = editor.brushes().assets().addRGBA(16, 16, tip.data(), static_cast<int32_t>(tip.size()));
+        p.grainTextureId =
+            editor.brushes().assets().addRGBA(16, 16, grain.data(), static_cast<int32_t>(grain.size()));
+        if (p.tipTextureId < 0 || p.grainTextureId < 0) return fail("grain-assets");
+        std::vector<BrushPreset> one{p};
+        const int32_t setId =
+            editor.brushes().addImportedSet("grain-check", BrushSource::ImportedProcreate, one);
+        if (setId < 0) return fail("grain-set");
+        const int32_t setIndex = editor.brushes().indexOfSetId(setId);
+        const int32_t pid = editor.brushes().presetIdInSet(setIndex, 0);
+        if (!editor.brushes().setActivePreset(pid)) return fail("grain-activate");
+        editor.beginStroke(8, 16, 1);
+        editor.continueStroke(56, 16, 1);
+        editor.endStroke();
+        Layer* layer = editor.layers().active();
+        if (!layer || !layer->hasPixels()) return fail("grain-layer");
+        int solid = 0, hole = 0;
+        for (int x = 16; x < 48; ++x) {
+            const uint8_t* px = layer->pixelAt(x, 16, 64);
+            if (px[3] > 200) ++solid;
+            else if (px[3] < 40) ++hole;
+        }
+        if (hole < 4 || solid < 4) return fail("grain-stripe-pattern");
+    }
+
+    // Procreate-like params: stroke taper shrinks start of stroke.
+    {
+        BrushPreset p;
+        p.lineWidthPx = 40.f;
+        p.taperSize = 1.f;
+        p.minSize = 0.05f;
+        p.sizePressure = 0.f;
+        const float r0 = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p, 1.f, 0.f)
+        );
+        const float r1 = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p, 1.f, 400.f)
+        );
+        if (!(r0 < r1 * 0.6f)) return fail("taper-start-thin");
+        BrushPreset p2;
+        p2.lineWidthPx = 40.f;
+        p2.minSize = 0.25f;
+        p2.sizePressure = 1.f;
+        const float rLo = StrokeRasterizer::effectiveRadius(0.f, p2);
+        const float rHi = StrokeRasterizer::effectiveRadius(1.f, p2);
+        if (!(rLo < rHi * 0.5f)) return fail("minsize-pressure");
     }
 
     return true;

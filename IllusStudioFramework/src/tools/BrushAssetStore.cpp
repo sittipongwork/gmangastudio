@@ -83,6 +83,35 @@ int32_t BrushAssetStore::addImageBytes(const uint8_t* data, int32_t size, const 
         }
     }
 
+    // Procreate Shape/Grain: grayscale RGB + opaque A after CG. Stamp coverage uses
+    // max(RGB,A) — without this, dark grain/tip holes read as full coverage (solid strokes).
+    // Skip flat RGB (fixture tips) so near-black + A=255 still stamps via alpha.
+    {
+        bool alphaFlatOpaque = true;
+        double sum = 0, sum2 = 0;
+        const size_t n = w * h;
+        for (size_t i = 0; i < n; ++i) {
+            const uint8_t* p = rgba.data() + i * 4u;
+            if (p[3] < 255) {
+                alphaFlatOpaque = false;
+                break;
+            }
+            const double lum = std::max({p[0], p[1], p[2]});
+            sum += lum;
+            sum2 += lum * lum;
+        }
+        if (alphaFlatOpaque && n > 0) {
+            const double mean = sum / static_cast<double>(n);
+            const double var = sum2 / static_cast<double>(n) - mean * mean;
+            if (var > 64.0) { // std > 8
+                for (size_t i = 0; i < n; ++i) {
+                    uint8_t* p = rgba.data() + i * 4u;
+                    p[3] = std::max({p[0], p[1], p[2]});
+                }
+            }
+        }
+    }
+
     return addRGBA(static_cast<int32_t>(w), static_cast<int32_t>(h), rgba.data(), static_cast<int32_t>(rgba.size()));
 }
 

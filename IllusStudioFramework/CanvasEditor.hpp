@@ -76,6 +76,16 @@ public:
     const char* brushPresetName(int32_t index) const SWIFT_RETURNS_INDEPENDENT_VALUE;
     const char* brushPresetNameInSet(int32_t setIndex, int32_t presetIndex) const SWIFT_RETURNS_INDEPENDENT_VALUE;
     bool brushPresetApproximated(int32_t setIndex, int32_t presetIndex) const;
+    float brushPresetLineWidthInSet(int32_t setIndex, int32_t presetIndex) const;
+    /// Brush Library chip preview (QuickLook or rendered tip strip).
+    bool copyBrushPresetPreviewRGBA(
+        int32_t setIndex,
+        int32_t presetIndex,
+        int32_t outW,
+        int32_t outH,
+        uint8_t* outRGBA,
+        int32_t outByteCount
+    ) const;
     bool setBrushPreset(int32_t index);
     bool setBrushPresetInSet(int32_t setIndex, int32_t presetIndex);
     int32_t activeBrushPresetIndex() const;

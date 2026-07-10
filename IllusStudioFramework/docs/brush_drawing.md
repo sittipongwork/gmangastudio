@@ -448,14 +448,16 @@ BrushSet {
 }
 ```
 
-Built-ins (minimal set):
+Built-ins (four sets):
 
-| Id | Name | Mode | Notes |
-|----|------|------|--------|
-| `ink.round` | Round Ink | Paint | Hardness ~0.9, low lineSmooth |
-| `air.soft` | Soft Airbrush | Paint | Hardness ~0.2, higher spacing |
-| `erase.soft` | Soft Eraser | Erase | Dest-out, soft falloff |
-| `erase.hard` | Hard Eraser | Erase | Dest-out, hard edge |
+| Set | Presets | Notes |
+|-----|---------|--------|
+| **Sketching** | `pencil.hard`, `pencil.soft`, `sketch.rough` | Pressure-friendly pencils |
+| **Inking** | `ink.fine`, `ink.round`, `ink.brush` | Hard / round / brush ink (default paint = `ink.round`) |
+| **Drawing** | `technical.pen`, `marker`, `erase.soft`, `erase.hard` | Line tools + erasers |
+| **Painting** | `paint.round`, `air.soft`, `paint.wash` | Soft / airbrush / wash |
+
+All procedural round for now (tip textures: T1-7-3b).
 
 ### Pre-draw properties (user adjusts before drawing)
 
@@ -568,21 +570,27 @@ Procreate key names change across versions; maintain a **synonym table** in `src
 
 | Our `BrushPreset` | Map from Procreate-ish params | Notes |
 |-------------------|------------------------------|--------|
-| `lineWidthPx` | max size / diameter | Scale to canvas px; clamp |
+| `lineWidthPx` | max size / diameter | Scale normalized Procreate sizes (×40 when <8) |
 | `lineSmooth` | streamline / stabilization | Normalize 0..1 |
 | `hardness` | hardness / softness | Invert if source is “softness” |
-| `opacity` | opacity | |
+| `opacity` | opacity / paintOpacity | |
 | `flow` | flow / accumulation | |
-| `spacing` | spacing | Often % of size |
-| `sizePressure` | size pressure graph → gain | v1: sample curve endpoints → linear gain |
-| `opacityPressure` | opacity pressure graph → gain | same |
-| `roundness` / `angleDeg` | shape dynamics | Store even if rasterizer ignores until later |
+| `spacing` | plotSpacing / spacing | Fraction of diameter |
+| `minSize` | minSize + size curve Y0 | Size at pressure 0 |
+| `sizePressure` | dynamicsPressureSize + size curve | 0 = off |
+| `opacityPressure` | dynamicsPressureOpacity + curve | |
+| `taperSize` | taperSize / pencilTaperSize | Stroke-start taper |
+| `taperOpacity` | taperOpacity | |
+| `orientTip` | oriented | Rotate tip to stroke |
+| `shapeInverted` | shapeInverted | Force tip invert |
+| `grainScale` | textureScale | Grain tiling |
+| `roundness` / `angleDeg` | shapeRoundness / shapeRotation | |
 | `tipTextureId` | Shape / tip PNG | Required for textured brushes |
-| `grainTextureId` | Grain PNG | Optional; multiply in dab later |
+| `grainTextureId` | Grain PNG | Multiplied into tip coverage |
 | `previewTextureId` | Preview PNG | UI only |
 | `mode` | paint vs eraser flag if present | Default Paint; user can assign to Eraser tool |
 
-**Unsupported in v1 (store as ignored extras or drop):** wet mix, dual brush, smudge-only tips, full pressure *graphs* as editable curves, Apple Pencil squeeze, render modes we do not have.
+**Unsupported in v1 (store as ignored extras or drop):** wet mix, dual brush, smudge-only tips, full editable pressure *graphs* (endpoints only), Apple Pencil squeeze, render modes we do not have.
 
 Document in UI: **“Imported — approximated”** when any required key is missing or unmapped.
 
@@ -591,10 +599,10 @@ Document in UI: **“Imported — approximated”** when any required key is mis
 | Tip | Behavior |
 |-----|----------|
 | No tip texture | Procedural round dab |
-| Tip PNG (`tipTextureId`) | **Stored only** for now — stamp uses procedural round (raw Shape.png as coverage = noise/dark cores). Re-enable as soft silhouette + AA in **T1-7-3b** |
-| Grain | Optional multiply — **not wired yet** ([T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import)); `grainTextureId` stored on import |
+| Tip PNG (`tipTextureId`) | Stamp tip (bilinear, invert dark-on-light or `shapeInverted`, silhouette). Skip AuthorPicture/Signature. |
+| Grain | Multiply into tip coverage ([T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import)) |
 
-Import without tip stamp is still useful: map numeric params onto round brushes (spacing/flow/hardness clamped so imported presets stay continuous and solid).
+`.brushset`: folders are UUIDs; display names come from `Brush.archive` (`SilicaBrush` stub decode). Set name + order from `brushset.plist`.
 
 ### Public API (import)
 
@@ -632,7 +640,7 @@ DrawingEditor: `presentBrushImport()` / `fileImporter` + approximated badge in B
 | Param map | **T1-7-2** | done | Decode `Brush.archive`; map size/opacity/spacing/smooth/hardness/pressure |
 | Tip assets | **T1-7-3** | done | Import/store tip PNG; stamp deferred (procedural round) |
 | Public + listing APIs | **T1-7-4** | done | `importBrushPackage*`, `brushSetSource`, approximated |
-| Library UX | **T1-7-5** | done | Swift Import UI, Imported set, approximate badge |
+| Library UX | **T1-7-5** | done | Swift Import UI; list chips = QuickLook or tip/grain stroke strip |
 | `.brushlibrary` | **T1-7-6** | done | Multi-set package |
 | Tip silhouette + grain | **T1-7-3b** | open | Soft tip mask + `grainTextureId` multiply (not raw Shape.png coverage) |
 | Photoshop `.abr` | **T1-7-7** | open | Later if needed |

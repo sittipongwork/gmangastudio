@@ -5,8 +5,14 @@
 
 #include "BrushLibrary.hpp"
 
+#include "../math/Rect.hpp"
+#include "../render/StrokeRasterizer.hpp"
+#include "../strokes/StrokeSample.hpp"
+
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <vector>
 
 namespace illus {
 namespace {
@@ -15,24 +21,131 @@ float clampf(float v, float lo, float hi) {
     return std::clamp(v, lo, hi);
 }
 
+void nearestDownsample(
+    const uint8_t* src,
+    int32_t srcW,
+    int32_t srcH,
+    uint8_t* dst,
+    int32_t dstW,
+    int32_t dstH
+) {
+    for (int32_t y = 0; y < dstH; ++y) {
+        const int32_t sy = std::min(srcH - 1, (y * srcH) / dstH);
+        for (int32_t x = 0; x < dstW; ++x) {
+            const int32_t sx = std::min(srcW - 1, (x * srcW) / dstW);
+            const size_t si = (static_cast<size_t>(sy) * static_cast<size_t>(srcW) + static_cast<size_t>(sx)) * 4u;
+            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(dstW) + static_cast<size_t>(x)) * 4u;
+            dst[di] = src[si];
+            dst[di + 1] = src[si + 1];
+            dst[di + 2] = src[si + 2];
+            dst[di + 3] = src[si + 3];
+        }
+    }
+}
+
+/// Fit `tex` into dst (letterbox), transparent padding.
+bool letterboxTexture(const BrushTexture& tex, int32_t outW, int32_t outH, uint8_t* outRGBA) {
+    if (tex.width < 1 || tex.height < 1 || tex.rgba.empty()) return false;
+    const float sx = static_cast<float>(outW) / static_cast<float>(tex.width);
+    const float sy = static_cast<float>(outH) / static_cast<float>(tex.height);
+    const float scale = std::min(sx, sy);
+    const int32_t dw = std::max(1, static_cast<int32_t>(std::lround(tex.width * scale)));
+    const int32_t dh = std::max(1, static_cast<int32_t>(std::lround(tex.height * scale)));
+    const int32_t ox = (outW - dw) / 2;
+    const int32_t oy = (outH - dh) / 2;
+    for (int32_t y = 0; y < dh; ++y) {
+        const int32_t syi = std::min(tex.height - 1, (y * tex.height) / dh);
+        for (int32_t x = 0; x < dw; ++x) {
+            const int32_t sxi = std::min(tex.width - 1, (x * tex.width) / dw);
+            const size_t si =
+                (static_cast<size_t>(syi) * static_cast<size_t>(tex.width) + static_cast<size_t>(sxi)) * 4u;
+            const int32_t dx = ox + x;
+            const int32_t dy = oy + y;
+            if (dx < 0 || dy < 0 || dx >= outW || dy >= outH) continue;
+            const size_t di =
+                (static_cast<size_t>(dy) * static_cast<size_t>(outW) + static_cast<size_t>(dx)) * 4u;
+            outRGBA[di] = tex.rgba[si];
+            outRGBA[di + 1] = tex.rgba[si + 1];
+            outRGBA[di + 2] = tex.rgba[si + 2];
+            outRGBA[di + 3] = tex.rgba[si + 3];
+        }
+    }
+    return true;
+}
+
+bool renderStrokeStrip(
+    const BrushPreset& base,
+    const BrushAssetStore& assets,
+    int32_t outW,
+    int32_t outH,
+    uint8_t* outRGBA
+) {
+    constexpr int32_t kSrcW = 256;
+    constexpr int32_t kSrcH = 64;
+    std::vector<uint8_t> buf(static_cast<size_t>(kSrcW) * static_cast<size_t>(kSrcH) * 4u, 0);
+
+    BrushPreset preset = base;
+    preset.mode = BrushMode::Paint;
+    preset.color = math::RGBA{255, 255, 255, 255};
+    preset.opacity = 1.f;
+    // Fit brush into strip height.
+    preset.lineWidthPx = clampf(preset.lineWidthPx, 3.f, static_cast<float>(kSrcH) * 0.42f);
+    // Match resolvedPreset: grain needs low flow; tip-only can go dense.
+    if (preset.grainTextureId >= 0) {
+        preset.spacing = std::min(std::max(preset.spacing, 0.04f), 0.14f);
+        preset.flow = std::min(preset.flow, 0.32f);
+    } else if (preset.tipTextureId >= 0) {
+        preset.spacing = std::min(preset.spacing, 0.12f);
+        preset.flow = std::max(preset.flow, 0.85f);
+    }
+
+    const float pad = 12.f;
+    const float midY = static_cast<float>(kSrcH) * 0.55f;
+    auto yAt = [&](float t) {
+        return midY + std::sin(t * 6.2831853f) * static_cast<float>(kSrcH) * 0.18f;
+    };
+
+    float carry = 0.f;
+    float strokeDist = 0.f;
+    math::Rect dirty{};
+    StrokeSample prev{pad, yAt(0.f), 1.f};
+    {
+        const BrushPreset dab = StrokeRasterizer::withStrokeDynamics(preset, 1.f, 0.f);
+        StrokeRasterizer::stampDab(buf.data(), kSrcW, kSrcH, prev.x, prev.y, 1.f, dab, dirty, &assets);
+    }
+    constexpr int kSegs = 24;
+    for (int i = 1; i <= kSegs; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(kSegs);
+        StrokeSample next{
+            pad + t * (static_cast<float>(kSrcW) - 2.f * pad),
+            yAt(t),
+            1.f
+        };
+        StrokeRasterizer::stampSegment(
+            buf.data(), kSrcW, kSrcH, prev, next, preset, carry, strokeDist, dirty, nullptr, &assets
+        );
+        prev = next;
+    }
+
+    nearestDownsample(buf.data(), kSrcW, kSrcH, outRGBA, outW, outH);
+    return true;
+}
+
 } // namespace
 
 BrushLibrary::BrushLibrary() {
     seedBuiltIns();
-    lastPaintPresetId_ = presets_[0].id; // ink.round
-    lastErasePresetId_ = presets_[2].id; // erase.soft
+    // Defaults: Inking → ink.round; Drawing → erase.soft
+    if (const BrushPreset* ink = findByName("ink.round")) lastPaintPresetId_ = ink->id;
+    else if (!presets_.empty()) lastPaintPresetId_ = presets_[0].id;
+    if (const BrushPreset* erase = findByName("erase.soft")) lastErasePresetId_ = erase->id;
     session_.presetId = lastPaintPresetId_;
     syncSessionFromPreset();
 }
 
 void BrushLibrary::seedBuiltIns() {
-    BrushSet builtIn;
-    builtIn.id = nextSetId_++;
-    builtIn.name = "Built-in";
-    builtIn.source = BrushSource::BuiltIn;
-
-    auto add = [&](const char* name, BrushMode mode, float width, float smooth, float hard,
-                   float opac, float flow, float spacing, float sizeP, float opacP, math::RGBA color) {
+    auto addTo = [&](BrushSet& set, const char* name, BrushMode mode, float width, float smooth,
+                     float hard, float opac, float flow, float spacing, float sizeP, float opacP) {
         BrushPreset p;
         p.id = nextPresetId_++;
         p.name = name;
@@ -46,18 +159,45 @@ void BrushLibrary::seedBuiltIns() {
         p.spacing = spacing;
         p.sizePressure = sizeP;
         p.opacityPressure = opacP;
-        p.color = color;
-        builtIn.presetIds.push_back(p.id);
+        p.color = {20, 20, 20, 255};
+        if (mode == BrushMode::Erase) p.color = {0, 0, 0, 255};
+        set.presetIds.push_back(p.id);
         presets_.push_back(std::move(p));
     };
 
-    // ink.round, air.soft, erase.soft, erase.hard
-    add("ink.round", BrushMode::Paint, 16.f, 0.1f, 0.9f, 1.f, 1.f, 0.2f, 1.f, 0.f, {20, 20, 20, 255});
-    add("air.soft", BrushMode::Paint, 32.f, 0.2f, 0.2f, 0.6f, 0.5f, 0.35f, 0.8f, 0.4f, {20, 20, 20, 255});
-    add("erase.soft", BrushMode::Erase, 24.f, 0.1f, 0.25f, 1.f, 1.f, 0.25f, 1.f, 0.f, {0, 0, 0, 255});
-    add("erase.hard", BrushMode::Erase, 16.f, 0.05f, 0.95f, 1.f, 1.f, 0.2f, 1.f, 0.f, {0, 0, 0, 255});
+    auto makeSet = [&](const char* name) {
+        BrushSet set;
+        set.id = nextSetId_++;
+        set.name = name;
+        set.source = BrushSource::BuiltIn;
+        return set;
+    };
 
-    sets_.push_back(std::move(builtIn));
+    // name, mode, width, smooth, hard, opac, flow, spacing, sizeP, opacP
+    BrushSet sketching = makeSet("Sketching");
+    addTo(sketching, "pencil.hard", BrushMode::Paint, 6.f, 0.05f, 0.95f, 1.f, 1.f, 0.12f, 1.f, 0.f);
+    addTo(sketching, "pencil.soft", BrushMode::Paint, 10.f, 0.12f, 0.55f, 0.85f, 0.9f, 0.14f, 0.9f, 0.25f);
+    addTo(sketching, "sketch.rough", BrushMode::Paint, 14.f, 0.08f, 0.7f, 0.7f, 0.85f, 0.15f, 0.85f, 0.15f);
+    sets_.push_back(std::move(sketching));
+
+    BrushSet inking = makeSet("Inking");
+    addTo(inking, "ink.fine", BrushMode::Paint, 4.f, 0.08f, 0.98f, 1.f, 1.f, 0.1f, 0.6f, 0.f);
+    addTo(inking, "ink.round", BrushMode::Paint, 16.f, 0.1f, 0.9f, 1.f, 1.f, 0.12f, 1.f, 0.f);
+    addTo(inking, "ink.brush", BrushMode::Paint, 22.f, 0.15f, 0.75f, 1.f, 1.f, 0.12f, 1.f, 0.1f);
+    sets_.push_back(std::move(inking));
+
+    BrushSet drawing = makeSet("Drawing");
+    addTo(drawing, "technical.pen", BrushMode::Paint, 3.f, 0.02f, 1.f, 1.f, 1.f, 0.1f, 0.f, 0.f);
+    addTo(drawing, "marker", BrushMode::Paint, 18.f, 0.1f, 0.85f, 0.95f, 1.f, 0.12f, 0.5f, 0.f);
+    addTo(drawing, "erase.soft", BrushMode::Erase, 24.f, 0.1f, 0.25f, 1.f, 1.f, 0.14f, 1.f, 0.f);
+    addTo(drawing, "erase.hard", BrushMode::Erase, 16.f, 0.05f, 0.95f, 1.f, 1.f, 0.12f, 1.f, 0.f);
+    sets_.push_back(std::move(drawing));
+
+    BrushSet painting = makeSet("Painting");
+    addTo(painting, "paint.round", BrushMode::Paint, 28.f, 0.15f, 0.45f, 0.9f, 0.85f, 0.12f, 0.9f, 0.2f);
+    addTo(painting, "air.soft", BrushMode::Paint, 32.f, 0.2f, 0.2f, 0.6f, 0.5f, 0.15f, 0.8f, 0.4f);
+    addTo(painting, "paint.wash", BrushMode::Paint, 40.f, 0.25f, 0.15f, 0.35f, 0.35f, 0.14f, 0.7f, 0.35f);
+    sets_.push_back(std::move(painting));
 }
 
 const char* BrushLibrary::setName(int32_t setIndex) const {
@@ -129,6 +269,14 @@ BrushPreset* BrushLibrary::find(int32_t presetId) {
     return nullptr;
 }
 
+const BrushPreset* BrushLibrary::findByName(const char* name) const {
+    if (!name || !name[0]) return nullptr;
+    for (const auto& p : presets_) {
+        if (p.name == name) return &p;
+    }
+    return nullptr;
+}
+
 bool BrushLibrary::setActivePreset(int32_t presetId) {
     const BrushPreset* p = find(presetId);
     if (!p) return false;
@@ -183,12 +331,23 @@ BrushPreset BrushLibrary::resolvedPreset() const {
     out.spacing = clampf(out.spacing, 0.01f, 2.f);
     out.sizePressure = clampf(out.sizePressure, 0.f, 1.f);
     out.opacityPressure = clampf(out.opacityPressure, 0.f, 1.f);
-    // ponytail: until T1-7-3b tip/grain, imported tip presets stamp as solid round —
-    // Procreate spacing/flow/softness otherwise produce scalloped muddy dabs.
-    if (out.tipTextureId >= 0) {
-        out.spacing = std::min(out.spacing, 0.10f);
-        out.flow = std::max(out.flow, 0.95f);
-        out.hardness = std::max(out.hardness, 0.88f);
+    out.minSize = clampf(out.minSize, 0.f, 1.f);
+    out.taperSize = clampf(out.taperSize, 0.f, 1.f);
+    out.taperOpacity = clampf(out.taperOpacity, 0.f, 1.f);
+    out.taperPressure = clampf(out.taperPressure, 0.f, 1.f);
+    out.grainScale = std::max(0.05f, out.grainScale);
+    out.grainDepth = clampf(out.grainDepth, 0.f, 1.f);
+    // Tip-only ink: dense solid. Grain/hatch: keep flow low so texture holes survive overlaps.
+    if (out.grainTextureId >= 0) {
+        // False-zero grainDepth from import would paint solid — treat as full punch.
+        if (out.grainDepth < 0.05f) out.grainDepth = 1.f;
+        out.spacing = std::min(std::max(out.spacing, 0.04f), 0.14f);
+        out.flow = std::min(out.flow, 0.32f);
+        out.hardness = std::max(out.hardness, 0.55f);
+    } else if (out.tipTextureId >= 0) {
+        out.spacing = std::min(out.spacing, 0.12f);
+        out.flow = std::max(out.flow, 0.85f);
+        out.hardness = std::max(out.hardness, 0.75f);
     } else {
         out.spacing = std::min(out.spacing, 0.15f);
     }
@@ -245,6 +404,31 @@ int32_t BrushLibrary::addImportedSet(const char* name, BrushSource source, std::
     const int32_t setId = set.id;
     sets_.push_back(std::move(set));
     return setId;
+}
+
+bool BrushLibrary::copyPresetPreviewRGBA(
+    int32_t setIndex,
+    int32_t presetIndex,
+    int32_t outW,
+    int32_t outH,
+    uint8_t* outRGBA,
+    int32_t outByteCount
+) const {
+    if (!outRGBA || outW < 1 || outH < 1) return false;
+    const int32_t need = outW * outH * 4;
+    if (outByteCount < need) return false;
+    std::memset(outRGBA, 0, static_cast<size_t>(need));
+
+    const int32_t id = presetIdInSet(setIndex, presetIndex);
+    const BrushPreset* p = find(id);
+    if (!p) return false;
+
+    if (p->previewTextureId >= 0) {
+        if (const BrushTexture* tex = assets_.find(p->previewTextureId)) {
+            if (letterboxTexture(*tex, outW, outH, outRGBA)) return true;
+        }
+    }
+    return renderStrokeStrip(*p, assets_, outW, outH, outRGBA);
 }
 
 } // namespace illus

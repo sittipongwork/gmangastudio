@@ -66,9 +66,20 @@ public:
     /// Append imported set; assigns ids; returns set id or -1.
     int32_t addImportedSet(const char* name, BrushSource source, std::vector<BrushPreset>& presets);
 
+    /// Brush list chip: QuickLook preview if present, else tip/grain stroke strip.
+    bool copyPresetPreviewRGBA(
+        int32_t setIndex,
+        int32_t presetIndex,
+        int32_t outW,
+        int32_t outH,
+        uint8_t* outRGBA,
+        int32_t outByteCount
+    ) const;
+
 private:
     void seedBuiltIns();
     void syncSessionFromPreset();
+    const BrushPreset* findByName(const char* name) const;
     int32_t lastPaintPresetId_ = 0;
     int32_t lastErasePresetId_ = 0;
     ToolMode tool_ = ToolMode::Brush;

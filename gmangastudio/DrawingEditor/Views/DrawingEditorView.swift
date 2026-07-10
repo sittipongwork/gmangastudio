@@ -54,7 +54,7 @@ struct DrawingEditorView: View {
                             highPerformancePresent: viewModel.appActiveStatus == .performanceMode,
                             presentFps: viewModel.presentFps,
                             eyedropperActive: viewModel.isEyedropperActive,
-                            onDragChanged: { viewModel.pointerChanged(at: $0) },
+                            onDragChanged: { viewModel.pointerChanged(at: $0, pressure: $1) },
                             onDragEnded: { viewModel.pointerEnded() },
                             onPan: { delta, size in viewModel.panBy(delta, viewSize: size) },
                             onZoom: { factor, focus, size in
@@ -100,6 +100,7 @@ struct DrawingEditorView: View {
                     presets: viewModel.brushPresets,
                     selectedSetIndex: viewModel.selectedBrushSetIndex,
                     selectedPresetIndex: viewModel.selectedBrushPresetIndex,
+                    isImporting: viewModel.isBrushImporting,
                     onSelectSet: { viewModel.selectBrushSet($0) },
                     onSelectPreset: { viewModel.selectBrushPreset($0) },
                     onImport: { viewModel.presentBrushImport() },

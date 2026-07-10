@@ -67,7 +67,7 @@ Former **P1** (tools) + [brush_drawing.md](brush_drawing.md). Vector source of t
 - [x] **T1-1-2** `beginStroke` / `continueStroke` / `endStroke` append samples (not pixels-only)
 - [x] **T1-1-3** `StrokeRasterizer` CPU path (migrate `stamp` / `stampLine`)
 - [x] **T1-1-4** Eraser mode — dest-out on active layer; erase as vector `Stroke`
-- [x] **T1-1-5** `BrushPreset` + `BrushLibrary` + `BrushSet` (built-ins: ink.round, air.soft, erase.soft, erase.hard)
+- [x] **T1-1-5** `BrushPreset` + `BrushLibrary` + `BrushSet` (built-in sets: Sketching / Inking / Drawing / Painting + basic presets)
 - [x] **T1-1-6** `BrushSession` — pre-draw overrides: **lineWidth**, **lineSmooth**, hardness, opacity, flow, spacing, pressure gains, color
 - [x] **T1-1-7** Public API: `setTool` / `setBrushPreset` / session getters-setters / `resetBrushSession` / optional `saveBrushSessionAsPreset`
 - [x] **T1-1-8** Apply `lineSmooth` as input filter before samples commit; snapshot session at `beginStroke`
@@ -98,10 +98,10 @@ Import `.brush` / `.brushset` (later `.brushlibrary`) into `BrushLibrary`. Desig
 
 - [x] **T1-7-1** Unzip package; discover brush folders; store tip/grain/preview PNGs in `BrushAssetStore`; create `BrushSet`
 - [x] **T1-7-2** Decode `Brush.archive` (bplist / NSKeyedArchiver shim); map → `lineWidth`, `lineSmooth`, hardness, opacity, spacing, pressure gains
-- [x] **T1-7-3** Tip assets import + store (`tipTextureId`); **stamp path currently procedural round only** — raw `Shape.png` as coverage baked grain/noise (re-enable silhouette+AA with **T1-7-3b**)
-- [ ] **T1-7-3b** Tip silhouette + grain multiply in dab path (`tipTextureId` / `grainTextureId` stored; not wired in rasterizers yet)
+- [x] **T1-7-3** Tip assets import + store; CPU tip stamp (bilinear + invert + silhouette); grain multiply (**T1-7-3b**)
+- [x] **T1-7-3b** Grain multiply in dab path; Procreate minSize / taperSize / pressure-curve endpoints mapped
 - [x] **T1-7-4** Public `importBrushPackage` / `importBrushPackageBytes` + set listing APIs (`brushSetSource`, `brushPresetApproximated`)
-- [x] **T1-7-5** Swift DrawingEditor: Import UI, Imported set, “approximated” badge
+- [x] **T1-7-5** Swift DrawingEditor: Import UI, Imported set, “approximated” badge; list chips use QuickLook / tip strip previews
 - [x] **T1-7-6** `.brushlibrary` as multi-set; fixture self-check in repo test resources
 - [ ] **T1-7-7** (Later) Photoshop `.abr` import if still needed
 

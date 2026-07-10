@@ -12,11 +12,12 @@ struct BrushLibrarySetItem: Identifiable, Equatable {
     let isImported: Bool
 }
 
-struct BrushLibraryPresetItem: Identifiable, Equatable {
+struct BrushLibraryPresetItem: Identifiable {
     let id: Int32 // preset index within set
     let name: String
     let strokeWeight: CGFloat
     let approximated: Bool
+    let preview: Image?
 }
 
 struct BrushLibraryWidgetView: View {
@@ -24,6 +25,7 @@ struct BrushLibraryWidgetView: View {
     var presets: [BrushLibraryPresetItem]
     var selectedSetIndex: Int32
     var selectedPresetIndex: Int32
+    var isImporting: Bool = false
     var onSelectSet: (Int32) -> Void
     var onSelectPreset: (Int32) -> Void
     var onImport: () -> Void = {}
@@ -60,6 +62,8 @@ struct BrushLibraryWidgetView: View {
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
+                .disabled(isImporting)
+                .opacity(isImporting ? 0.45 : 1)
                 .accessibilityLabel("Import Procreate brush")
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -100,6 +104,7 @@ struct BrushLibraryWidgetView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                            .disabled(isImporting)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -132,8 +137,9 @@ struct BrushLibraryWidgetView: View {
                                                 .clipShape(Capsule())
                                         }
                                     }
-                                    BrushStrokePreview(weight: preset.strokeWeight)
-                                        .frame(height: 28)
+                                    BrushStrokePreview(weight: preset.strokeWeight, preview: preset.preview)
+                                        .frame(height: 36)
+                                        .frame(maxWidth: .infinity)
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
@@ -146,6 +152,7 @@ struct BrushLibraryWidgetView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                            .disabled(isImporting)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -161,6 +168,29 @@ struct BrushLibraryWidgetView: View {
                 Color.black.opacity(0.6)
             }
         }
+        .overlay {
+            if isImporting {
+                ZStack {
+                    Color.black.opacity(0.45)
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.large)
+                            .tint(.white)
+                        Text("Importing brush…")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(Color.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Importing brush")
+            }
+        }
         .environment(\.colorScheme, .dark)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -172,23 +202,34 @@ struct BrushLibraryWidgetView: View {
     }
 }
 
-/// Simple stroke chip — ponytail: placeholder until tip previews exist.
+/// Real tip/QuickLook chip when available; path fallback for empty preview.
 private struct BrushStrokePreview: View {
     var weight: CGFloat
+    var preview: Image?
 
     var body: some View {
-        GeometryReader { geo in
-            let w = max(1.5, min(10, weight))
-            Path { path in
-                let y = geo.size.height * 0.55
-                path.move(to: CGPoint(x: 4, y: y))
-                path.addCurve(
-                    to: CGPoint(x: geo.size.width - 4, y: y - 2),
-                    control1: CGPoint(x: geo.size.width * 0.3, y: y - 10),
-                    control2: CGPoint(x: geo.size.width * 0.65, y: y + 10)
-                )
+        Group {
+            if let preview {
+                preview
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                GeometryReader { geo in
+                    let w = max(1.5, min(10, weight))
+                    Path { path in
+                        let y = geo.size.height * 0.55
+                        path.move(to: CGPoint(x: 4, y: y))
+                        path.addCurve(
+                            to: CGPoint(x: geo.size.width - 4, y: y - 2),
+                            control1: CGPoint(x: geo.size.width * 0.3, y: y - 10),
+                            control2: CGPoint(x: geo.size.width * 0.65, y: y + 10)
+                        )
+                    }
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+                }
             }
-            .stroke(Color.white, style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
         }
     }
 }
@@ -196,15 +237,18 @@ private struct BrushStrokePreview: View {
 #Preview {
     BrushLibraryWidgetView(
         sets: [
-            .init(id: 0, name: "Built-in", systemImage: "paintbrush.pointed", isImported: false),
-            .init(id: 1, name: "Inking", systemImage: "pencil.tip", isImported: true),
+            .init(id: 0, name: "Sketching", systemImage: "pencil", isImported: false),
+            .init(id: 1, name: "Inking", systemImage: "pencil.tip", isImported: false),
+            .init(id: 2, name: "Drawing", systemImage: "scribble.variable", isImported: false),
+            .init(id: 3, name: "Painting", systemImage: "paintbrush.pointed", isImported: false),
         ],
         presets: [
-            .init(id: 0, name: "ink.round", strokeWeight: 4, approximated: false),
-            .init(id: 1, name: "air.soft", strokeWeight: 8, approximated: true),
+            .init(id: 0, name: "ink.fine", strokeWeight: 2.5, approximated: false, preview: nil),
+            .init(id: 1, name: "ink.round", strokeWeight: 4, approximated: false, preview: nil),
+            .init(id: 2, name: "ink.brush", strokeWeight: 6, approximated: false, preview: nil),
         ],
-        selectedSetIndex: 0,
-        selectedPresetIndex: 0,
+        selectedSetIndex: 1,
+        selectedPresetIndex: 1,
         onSelectSet: { _ in },
         onSelectPreset: { _ in }
     )

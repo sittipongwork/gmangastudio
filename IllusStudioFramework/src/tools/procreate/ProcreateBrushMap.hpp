@@ -28,4 +28,12 @@ ProcreateArchiveFlat decodeProcreateArchive(const uint8_t* data, int32_t size);
 /// Apply known synonyms onto `preset`. Sets `approximated` if few keys matched.
 void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset, bool& approximated);
 
+/// Parse brushset.plist bytes → set display name + ordered brush UUID list.
+void parseBrushsetPlistBytes(
+    const uint8_t* data,
+    int32_t size,
+    std::string& outName,
+    std::vector<std::string>& outBrushOrder
+);
+
 } // namespace illus

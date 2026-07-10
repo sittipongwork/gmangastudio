@@ -199,6 +199,27 @@ bool CanvasEditor::brushPresetApproximated(int32_t setIndex, int32_t presetIndex
     return impl_->editor.brushes().presetApproximated(setIndex, presetIndex);
 }
 
+float CanvasEditor::brushPresetLineWidthInSet(int32_t setIndex, int32_t presetIndex) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const int32_t id = impl_->editor.brushes().presetIdInSet(setIndex, presetIndex);
+    const BrushPreset* p = impl_->editor.brushes().find(id);
+    return p ? p->lineWidthPx : 16.f;
+}
+
+bool CanvasEditor::copyBrushPresetPreviewRGBA(
+    int32_t setIndex,
+    int32_t presetIndex,
+    int32_t outW,
+    int32_t outH,
+    uint8_t* outRGBA,
+    int32_t outByteCount
+) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->editor.brushes().copyPresetPreviewRGBA(
+        setIndex, presetIndex, outW, outH, outRGBA, outByteCount
+    );
+}
+
 bool CanvasEditor::setBrushPreset(int32_t index) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     const int32_t id = impl_->editor.brushes().presetIdAt(index);

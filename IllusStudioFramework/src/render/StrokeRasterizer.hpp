@@ -52,6 +52,7 @@ public:
         const StrokeSample& b,
         const BrushPreset& preset,
         float& carryDist,
+        float& strokeDistPx,
         math::Rect& dirty,
         StrokeBounds* bounds,
         const BrushAssetStore* assets = nullptr
@@ -65,12 +66,19 @@ public:
         const StrokeSample& b,
         const BrushPreset& preset,
         float& carryDist,
+        float& strokeDistPx,
         math::Rect& dirty,
         StrokeBounds* bounds,
         const BrushAssetStore* assets = nullptr
     );
 
     static float effectiveRadius(float pressure, const BrushPreset& preset);
+
+    /// Procreate-like start taper (0..1) from distance along stroke.
+    static float strokeTaperFactor(float strokeDistPx, float pressure, const BrushPreset& preset);
+
+    /// Apply taper to width/opacity for a dab at `strokeDistPx`.
+    static BrushPreset withStrokeDynamics(const BrushPreset& preset, float pressure, float strokeDistPx);
 };
 
 } // namespace illus
