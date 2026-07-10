@@ -13,7 +13,7 @@ Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Spe
 | Id | Epic | Status |
 |----|------|--------|
 | [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done (blend modes open) |
-| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import) | T1-1…T1-4 + T1-7 done (T1-3-3 / T1-7-3b / T1-7-7 open) |
+| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import, Color Fill) | T1-1…T1-4 + T1-7 done (T1-3-3 / T1-7-3b / T1-7-7 / **T1-8** open) |
 | [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) + move/adjust + hybrid follow-ups | T2-1…T2-5 + T2-7-1 done (T2-6 / T2-7-2/3 open) |
 | [T3](#t3--history-undo--redo--timelapse) | History (undo / redo / timelapse) | open |
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
@@ -105,7 +105,18 @@ Import `.brush` / `.brushset` (later `.brushlibrary`) into `BrushLibrary`. Desig
 - [x] **T1-7-6** `.brushlibrary` as multi-set; fixture self-check in repo test resources
 - [ ] **T1-7-7** (Later) Photoshop `.abr` import if still needed
 
-**v1 out (T1):** dual brush, smudge, wet mix parity, multi-stroke lasso, document-wide stroke dump, Illustrator-grade Bézier UI, shipping Procreate’s default packs, claiming full Procreate compatibility.
+### T1-8 — Color Fill (ColorDrop)
+
+Procreate-style flood fill. Design: [brush_drawing.md](brush_drawing.md) § Color Fill (Procreate-style ColorDrop).
+
+- [ ] **T1-8-1** CPU scanline flood on active layer; `fillAt` / `setFillThreshold`; dirty GPU upload
+- [ ] **T1-8-2** DrawingEditor ColorDrop: drag color disc → `previewFillAt` + threshold bar → `commitFillAt`; remember threshold
+- [ ] **T1-8-3** Continue Filling mode (tap other regions after commit)
+- [ ] **T1-8-4** Reference layer (`setLayerReference` / boundary from reference, paint on active)
+- [ ] **T1-8-5** `FillCommand` for history (lands with or after T3)
+- [ ] **T1-8-6** Self-check: closed ring fill; threshold bleed; reference isolation; cancel preview
+
+**v1 out (T1):** dual brush, smudge, wet mix parity, multi-stroke lasso, document-wide stroke dump, Illustrator-grade Bézier UI, shipping Procreate’s default packs, claiming full Procreate compatibility, gradient/pattern fill.
 
 ---
 
@@ -262,11 +273,12 @@ Policy & samples: [cpp-math-libs skill](../../.cursor/skills/cpp-math-libs/SKILL
 
 ```text
 Next:
-  T0-12 (layer blend modes; Normal already; can parallel T2-6)
+  T0-12 (layer blend modes; Normal already; can parallel T2-6 / T1-8)
+  → T1-8 (Color Fill / ColorDrop; Reference layer)
   → T2-6 (move/adjust + gizmo)
   → T1-7-3b (grain multiply) when needed
   → T2-7-2 / T2-7-3 (tilt; stroke→tile index)
-  → T3 (history; stroke list ready)
+  → T3 (history; stroke list + FillCommand ready)
   → T4 → T5
   (TX-7 done — keep libs; follow best-use table above)
 ```

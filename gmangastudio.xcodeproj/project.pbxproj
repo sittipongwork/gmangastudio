@@ -68,9 +68,6 @@
 			membershipExceptions = (
 				README.md,
 				tools,
-				"third_party/eigen",
-				"third_party/glm",
-				"third_party/metal-cpp",
 			);
 			publicHeaders = (
 				CanvasEditor.hpp,
@@ -746,12 +743,6 @@
 					"$(inherited)",
 					"$(SRCROOT)/IllusStudioFramework/src",
 				);
-				SYSTEM_HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
-					"$(SRCROOT)/IllusStudioFramework/third_party/eigen",
-					"$(SRCROOT)/IllusStudioFramework/third_party/glm",
-				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
@@ -783,6 +774,12 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_VERSION = 5.0;
+				SYSTEM_HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
+					"$(SRCROOT)/IllusStudioFramework/third_party/eigen",
+					"$(SRCROOT)/IllusStudioFramework/third_party/glm",
+				);
 				TARGETED_DEVICE_FAMILY = 2;
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
@@ -807,12 +804,6 @@
 					"$(inherited)",
 					"$(SRCROOT)/IllusStudioFramework/src",
 				);
-				SYSTEM_HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
-					"$(SRCROOT)/IllusStudioFramework/third_party/eigen",
-					"$(SRCROOT)/IllusStudioFramework/third_party/glm",
-				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
@@ -844,6 +835,12 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_VERSION = 5.0;
+				SYSTEM_HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
+					"$(SRCROOT)/IllusStudioFramework/third_party/eigen",
+					"$(SRCROOT)/IllusStudioFramework/third_party/glm",
+				);
 				TARGETED_DEVICE_FAMILY = 2;
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";

@@ -8,6 +8,7 @@ import IllusStudioFramework
 import Observation
 import CoreGraphics
 import SwiftUI
+import Metal
 
 #if os(macOS)
 import AppKit
@@ -42,12 +43,34 @@ final class DrawingEditorViewModel {
     private var layerContentRevision: [Int32: Int] = [:]
     var isBrushImportPresented = false
 
+    /// Brush edit options (sidebar).
+    var brushColor: Color = Color(.sRGB, red: 20 / 255, green: 20 / 255, blue: 20 / 255, opacity: 1)
+    var brushSize: Double = 16
+    var brushOpacity: Double = 1
+    private(set) var colorHistory: [Color] = []
+    private(set) var eyedropperPreviewColor: Color = .clear
+    private(set) var eyedropperViewPoint: CGPoint = .zero
+    private(set) var showEyedropperPreview = false
+
     private var isStroking = false
     private var idle = AppActiveIdleTracker()
     private var idleTask: Task<Void, Never>?
     private(set) var mode: DrawingEditorMode = .brushLibrary
+    /// Only meaningful while `mode == .brushLibrary`. Always resets to `.brush` when entering brush.
+    private(set) var brushSubmode: BrushSubmode = .brush
     let canvasWidth: Int32
     let canvasHeight: Int32
+
+    private static let colorHistoryKey = "drawingEditor.brushColorHistory"
+    private static let maxColorHistory = 10
+
+    var isBrushEditOptionsVisible: Bool {
+        mode == .brushLibrary
+    }
+
+    var isEyedropperActive: Bool {
+        mode == .brushLibrary && brushSubmode == .eyedropper
+    }
 
     init() {
         let width: Int32 = 400
@@ -76,7 +99,11 @@ final class DrawingEditorViewModel {
         metalAvailable = ed.metalAvailable()
         editor = ed
         presentFps = fps
+        brushSize = Double(ed.brushLineWidth())
+        brushOpacity = Double(ed.brushOpacity())
+        pushBrushColorToEditor()
         syncViewportFromEditor()
+        colorHistory = Self.loadColorHistory()
         reloadBrushLibrary()
         reloadLayers()
         scheduleIdleCheck()
@@ -103,8 +130,12 @@ final class DrawingEditorViewModel {
         }
         self.mode = mode
         if mode == .brushLibrary {
+            brushSubmode = .brush
+            showEyedropperPreview = false
             isBrushLibraryVisible = true
         } else {
+            brushSubmode = .brush
+            showEyedropperPreview = false
             isBrushLibraryVisible = false
         }
         var ed = editor
@@ -114,6 +145,86 @@ final class DrawingEditorViewModel {
         case .eraser: ed.setTool(.Eraser)
         }
         editor = ed
+    }
+
+    func setBrushSubmode(_ submode: BrushSubmode) {
+        noteUserActivity()
+        guard mode == .brushLibrary else { return }
+        if isStroking {
+            isStroking = false
+            var ed = editor
+            ed.endStroke()
+            editor = ed
+        }
+        brushSubmode = submode
+        showEyedropperPreview = submode == .eyedropper ? showEyedropperPreview : false
+        var ed = editor
+        ed.setTool(submode == .eyedropper ? .Pointer : .Brush)
+        editor = ed
+    }
+
+    func enterEyedropper() {
+        guard mode == .brushLibrary else {
+            setMode(.brushLibrary)
+            setBrushSubmode(.eyedropper)
+            return
+        }
+        setBrushSubmode(.eyedropper)
+    }
+
+    func setBrushColor(_ color: Color) {
+        noteUserActivity()
+        brushColor = color
+        pushBrushColorToEditor()
+    }
+
+    /// Record current brush color into History (Colors widget close, or first dab of a stroke).
+    func recordBrushColorHistory() {
+        pushColorHistory(brushColor)
+    }
+
+    func setBrushSize(_ size: Double) {
+        noteUserActivity()
+        brushSize = min(max(size, 1), 100)
+        var ed = editor
+        ed.setBrushLineWidth(Float(brushSize))
+        editor = ed
+    }
+
+    func setBrushOpacity(_ opacity: Double) {
+        noteUserActivity()
+        brushOpacity = min(max(opacity, 0), 1)
+        var ed = editor
+        ed.setBrushOpacity(Float(brushOpacity))
+        editor = ed
+    }
+
+    func clearColorHistory() {
+        noteUserActivity()
+        colorHistory = []
+        UserDefaults.standard.removeObject(forKey: Self.colorHistoryKey)
+    }
+
+    func eyedropperMoved(viewPoint: CGPoint, canvasPoint: CGPoint) {
+        guard isEyedropperActive else { return }
+        noteUserActivity()
+        eyedropperViewPoint = viewPoint
+        if let sampled = sampleCompositeColor(at: canvasPoint) {
+            eyedropperPreviewColor = sampled
+        }
+        showEyedropperPreview = true
+    }
+
+    func eyedropperPick(at canvasPoint: CGPoint) {
+        guard isEyedropperActive else { return }
+        noteUserActivity()
+        if let sampled = sampleCompositeColor(at: canvasPoint) {
+            setBrushColor(sampled)
+        } else if showEyedropperPreview {
+            setBrushColor(eyedropperPreviewColor)
+        }
+        showEyedropperPreview = false
+        setBrushSubmode(.brush)
     }
 
     func toggleBrushLibrary() {
@@ -183,8 +294,13 @@ final class DrawingEditorViewModel {
         var ed = editor
         _ = ed.setBrushPresetInSet(selectedBrushSetIndex, presetIndexInSet)
         ed.setTool(.Brush)
+        brushSize = Double(ed.brushLineWidth())
+        brushOpacity = Double(ed.brushOpacity())
+        pushBrushColorToEditor()
         editor = ed
         mode = .brushLibrary
+        brushSubmode = .brush
+        showEyedropperPreview = false
     }
 
     func clear() {
@@ -348,12 +464,13 @@ final class DrawingEditorViewModel {
 
     func pointerChanged(at point: CGPoint) {
         noteUserActivity()
-        guard mode != .pointer else { return }
+        guard mode != .pointer, !isEyedropperActive else { return }
         var ed = editor
         if isStroking {
             ed.continueStroke(Float(point.x), Float(point.y), 1)
         } else {
             isStroking = true
+            recordBrushColorHistory()
             ed.beginStroke(Float(point.x), Float(point.y), 1)
         }
         editor = ed
@@ -376,6 +493,100 @@ final class DrawingEditorViewModel {
         viewportOffsetX = ed.viewportOffsetX()
         viewportOffsetY = ed.viewportOffsetY()
         zoomPercent = Int((viewportScale * 100).rounded())
+    }
+
+    private func pushBrushColorToEditor() {
+        var ed = editor
+        let rgba = Self.rgba8(from: brushColor)
+        ed.setBrushColor(rgba.0, rgba.1, rgba.2, rgba.3)
+        editor = ed
+    }
+
+    private func pushColorHistory(_ color: Color) {
+        let rgba = Self.rgba8(from: color)
+        colorHistory.removeAll { Self.rgba8(from: $0) == rgba }
+        colorHistory.insert(color, at: 0)
+        if colorHistory.count > Self.maxColorHistory {
+            colorHistory = Array(colorHistory.prefix(Self.maxColorHistory))
+        }
+        Self.saveColorHistory(colorHistory)
+    }
+
+    /// Sample present composite at canvas pixel (Shared MTLTexture).
+    private func sampleCompositeColor(at canvasPoint: CGPoint) -> Color? {
+        _ = editor.presentMetalTextureAddress()
+        let x = Int(canvasPoint.x.rounded())
+        let y = Int(canvasPoint.y.rounded())
+        guard x >= 0, y >= 0, x < Int(canvasWidth), y < Int(canvasHeight) else { return nil }
+        let addr = editor.presentMetalTextureAddress()
+        guard addr != 0, let ptr = UnsafeMutableRawPointer(bitPattern: UInt(addr)) else { return nil }
+        let tex = Unmanaged<MTLTexture>.fromOpaque(ptr).takeUnretainedValue()
+        var pixel = [UInt8](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes { buf in
+            guard let base = buf.baseAddress else { return }
+            tex.getBytes(
+                base,
+                bytesPerRow: 4,
+                from: MTLRegionMake2D(x, y, 1, 1),
+                mipmapLevel: 0
+            )
+        }
+        // Premultiplied present — unpremultiply for brush color when alpha > 0.
+        let a = Double(pixel[3]) / 255
+        guard a > 0.001 else {
+            return Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 1)
+        }
+        let r = min(1, Double(pixel[0]) / 255 / a)
+        let g = min(1, Double(pixel[1]) / 255 / a)
+        let b = min(1, Double(pixel[2]) / 255 / a)
+        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
+
+    private static func rgba8(from color: Color) -> (UInt8, UInt8, UInt8, UInt8) {
+        #if os(macOS)
+        let ns = NSColor(color)
+        guard let rgb = ns.usingColorSpace(.sRGB) else { return (20, 20, 20, 255) }
+        return (
+            UInt8(clamping: Int((rgb.redComponent * 255).rounded())),
+            UInt8(clamping: Int((rgb.greenComponent * 255).rounded())),
+            UInt8(clamping: Int((rgb.blueComponent * 255).rounded())),
+            UInt8(clamping: Int((rgb.alphaComponent * 255).rounded()))
+        )
+        #else
+        let ui = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return (
+            UInt8(clamping: Int((r * 255).rounded())),
+            UInt8(clamping: Int((g * 255).rounded())),
+            UInt8(clamping: Int((b * 255).rounded())),
+            UInt8(clamping: Int((a * 255).rounded()))
+        )
+        #endif
+    }
+
+    private static func loadColorHistory() -> [Color] {
+        guard let raw = UserDefaults.standard.array(forKey: colorHistoryKey) as? [String] else { return [] }
+        return raw.compactMap(colorFromHex)
+    }
+
+    private static func saveColorHistory(_ colors: [Color]) {
+        let hexes = colors.map(hexFromColor)
+        UserDefaults.standard.set(hexes, forKey: colorHistoryKey)
+    }
+
+    private static func hexFromColor(_ color: Color) -> String {
+        let c = rgba8(from: color)
+        return String(format: "%02X%02X%02X%02X", c.0, c.1, c.2, c.3)
+    }
+
+    private static func colorFromHex(_ hex: String) -> Color? {
+        guard hex.count == 8, let v = UInt32(hex, radix: 16) else { return nil }
+        let r = Double((v >> 24) & 0xFF) / 255
+        let g = Double((v >> 16) & 0xFF) / 255
+        let b = Double((v >> 8) & 0xFF) / 255
+        let a = Double(v & 0xFF) / 255
+        return Color(.sRGB, red: r, green: g, blue: b, opacity: a)
     }
 
     /// 120 when the panel can run it exactly; else 72 (144Hz divisor; avoids 60→48).

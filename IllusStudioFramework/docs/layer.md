@@ -27,6 +27,7 @@ Related: [README.md](../README.md) · [canvas_document.md](canvas_document.md) �
 - `addLayer(nullptr)` / empty / `"Layer"` → auto-name `Layer 1`, `Layer 2`, …; blend mode **`N` (Normal)**.
 - UI thumbs: `copyLayerThumbnailRGBA` (document aspect; refresh after paint / layer edits) — **done** (T0-11 / TX-6).
 - Layers panel blend badge + picker: **planned** (T0-12-7); not in DrawingEditor yet.
+- **Reference layer** (Color Fill): at most one layer with `isReference`; ColorDrop uses it as flood boundary while painting the active layer — see [brush_drawing.md](brush_drawing.md) § Color Fill · ROADMAP T1-8-4.
 
 ---
 

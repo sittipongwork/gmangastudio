@@ -21,11 +21,25 @@ struct DrawingEditorView: View {
             HStack(spacing: 0) {
                 DrawingEditorSidebarView(
                     mode: viewModel.mode,
+                    brushSubmode: viewModel.brushSubmode,
                     isBrushLibraryVisible: viewModel.isBrushLibraryVisible,
                     isLayersVisible: viewModel.isLayersVisible,
+                    showBrushEditOptions: viewModel.isBrushEditOptionsVisible,
+                    brushColor: viewModel.brushColor,
+                    brushSize: viewModel.brushSize,
+                    brushOpacity: viewModel.brushOpacity,
+                    colorHistory: viewModel.colorHistory,
                     onSelectMode: { viewModel.setMode($0) },
                     onToggleBrushLibrary: { viewModel.toggleBrushLibrary() },
-                    onToggleLayers: { viewModel.toggleLayers() }
+                    onToggleLayers: { viewModel.toggleLayers() },
+                    onBrushColorChange: { viewModel.setBrushColor($0) },
+                    onSelectHistoryColor: { viewModel.setBrushColor($0) },
+                    onClearColorHistory: { viewModel.clearColorHistory() },
+                    onColorPickerDismiss: { viewModel.recordBrushColorHistory() },
+                    onBrushSizeChange: { viewModel.setBrushSize($0) },
+                    onBrushOpacityChange: { viewModel.setBrushOpacity($0) },
+                    onEnterEyedropper: { viewModel.enterEyedropper() },
+                    onSelectBrushSubmode: { viewModel.setBrushSubmode($0) }
                 )
 
                 Group {
@@ -39,11 +53,18 @@ struct DrawingEditorView: View {
                             viewportOffsetY: viewModel.viewportOffsetY,
                             highPerformancePresent: viewModel.appActiveStatus == .performanceMode,
                             presentFps: viewModel.presentFps,
+                            eyedropperActive: viewModel.isEyedropperActive,
                             onDragChanged: { viewModel.pointerChanged(at: $0) },
                             onDragEnded: { viewModel.pointerEnded() },
                             onPan: { delta, size in viewModel.panBy(delta, viewSize: size) },
                             onZoom: { factor, focus, size in
                                 viewModel.zoomBy(factor, focus: focus, viewSize: size)
+                            },
+                            onHoverMoved: { viewPt, canvasPt in
+                                viewModel.eyedropperMoved(viewPoint: viewPt, canvasPoint: canvasPt)
+                            },
+                            onEyedropperPick: { _, canvasPt in
+                                viewModel.eyedropperPick(at: canvasPt)
                             }
                         )
                     } else {
@@ -54,6 +75,23 @@ struct DrawingEditorView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if viewModel.showEyedropperPreview {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(viewModel.eyedropperPreviewColor)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(Color.white, lineWidth: 2)
+                    )
+                    .frame(width: 28, height: 28)
+                    .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                    .position(
+                        x: sidebarWidth + viewModel.eyedropperViewPoint.x + 22,
+                        y: viewModel.eyedropperViewPoint.y
+                    )
+                    .allowsHitTesting(false)
+                    .zIndex(20)
             }
 
             if viewModel.isBrushLibraryVisible {

@@ -1,8 +1,8 @@
 # Hybrid drawing — Brush library & eraser
 
-Feature spec + design for brush library, eraser, and the **Hybrid (Vector + Raster)** pipeline so the app keeps vector integrity (undo, edit, sharp export) and raster fluidity (soft brushes, blur, fill, high-rate present).
+Feature spec + design for brush library, eraser, **Color Fill (ColorDrop)**, and the **Hybrid (Vector + Raster)** pipeline so the app keeps vector integrity (undo, edit, sharp export) and raster fluidity (soft brushes, blur, fill, high-rate present).
 
-**Status (code):** T1-1…T1-4, T1-7 (tip stamp + import UX), T2-7-1 done. Open: T2-6 move/adjust, T1-7-3b grain multiply, T3 history, image import (T4-1).  
+**Status (code):** T1-1…T1-4, T1-7 (tip stamp + import UX), T2-7-1 done. Open: T2-6 move/adjust, T1-7-3b grain multiply, **T1-8 Color Fill**, T3 history, image import (T4-1).  
 **Tasks & checkboxes:** [ROADMAP.md](ROADMAP.md)  
 Related: [README.md](../README.md) · [API.md](API.md) · [layer.md](layer.md) · [canvas_document.md](canvas_document.md) · [history.md](history.md) · [AGENTS.md](../../AGENTS.md)
 
@@ -12,10 +12,11 @@ Related: [README.md](../README.md) · [API.md](API.md) · [layer.md](layer.md) �
 
 | | |
 |--|--|
-| **Inputs** | Tool mode (brush/eraser); preset id; **pre-draw** line width, line smooth, hardness, opacity, flow, spacing, pressure gains, color; pointer stream with pressure; Procreate `.brush` / `.brushset` / `.brushlibrary` import |
-| **State** | `BrushLibrary` + sets; `BrushSession` overrides; vector strokes on active layer; regenerable raster cache; tip/grain assets |
-| **API** | Stroke stream + session setters + `importBrushPackage` / `importBrushPackageBytes` (**shipped**); layer-scoped stroke query/edit (**T2-6**, planned) |
+| **Inputs** | Tool mode (brush/eraser/fill); preset id; **pre-draw** line width, line smooth, hardness, opacity, flow, spacing, pressure gains, color; pointer stream with pressure; Procreate `.brush` / `.brushset` / `.brushlibrary` import; ColorDrop seed + threshold |
+| **State** | `BrushLibrary` + sets; `BrushSession` overrides; vector strokes on active layer; regenerable raster cache; tip/grain assets; fill session (threshold, continue-filling); optional **Reference** layer |
+| **API** | Stroke stream + session setters + `importBrushPackage*` (**shipped**); layer-scoped stroke query/edit (**T2-6**); Color Fill / ColorDrop (**T1-8**, planned) |
 | **Eraser** | Dest-out on active layer; recorded as vector stroke |
+| **Fill** | Flood-fill active layer from seed (Procreate ColorDrop); optional Reference layer for line boundaries |
 | **v1 out** | Dual brush, smudge, wet-mix parity, full Procreate engine clone, shipping Procreate default packs |
 
 ---
@@ -88,7 +89,7 @@ Placement {
 
 | Goal | How hybrid delivers it |
 |------|------------------------|
-| Fluidity & effects | Raster cache + Metal: soft dabs, hardness falloff, blur/fill later |
+| Fluidity & effects | Raster cache + Metal: soft dabs, hardness falloff, **Color Fill**, blur later |
 | Sharpness & integrity | Authoritative stroke is vector (samples / curves), not pixels |
 | Anti-corruption | Undo/redo and stroke edit mutate vector data; raster is regenerable |
 | Max performance | Live stroke → GPU rasterize dirty tiles; idle layers stay as textures; no full CPU re-stamp of history |
@@ -660,14 +661,254 @@ DrawingEditor: `presentBrushImport()` / `fileImporter` + approximated badge in B
 
 ---
 
+## Color Fill (Procreate-style ColorDrop)
+
+Flood-fill a closed region on the **active layer** with the session color — Procreate’s ColorDrop. Complements brush/eraser: ink with strokes, then drop flats into closed shapes.
+
+**Status:** design only — implement as [T1-8](ROADMAP.md#t1-8--color-fill-colordrop).  
+**Inspiration:** [Procreate ColorDrop](https://help.procreate.com/articles/zmlayd-fill-an-area-using-colordrop) + Reference Layer (not a 1:1 clone).
+
+### Summary
+
+| | |
+|--|--|
+| **Inputs** | Seed point (canvas space); fill color (session RGBA); **threshold** 0…1; optional Reference layer; Continue Filling taps |
+| **State** | `FillSession { threshold, continueFilling }`; at most **one** layer marked `isReference`; fill writes **active layer** pixels only |
+| **API** | `ToolMode::Fill`; `fillAt` / `previewFillAt` / `commitFill`; `setFillThreshold` / `fillThreshold`; `setLayerReference` / `layerIsReference`; `setContinueFilling` |
+| **Rules** | Flood from seed until boundary; threshold controls bleed into edges; Reference layer supplies boundaries while paint lands on active; never fill a layer group |
+| **v1 out** | Gradient fill, pattern fill, fill into selection (until selection exists), fill whole layer from Layers menu (can add as thin wrapper), recolor-replace |
+
+### UX (match Procreate feel)
+
+| Gesture | Behavior |
+|---------|----------|
+| **ColorDrop** | Drag active color disc onto canvas → seed at drop point → flood with session color |
+| **Threshold adjust** | Hold after drop (don’t lift) → show threshold bar → drag **left = less bleed**, **right = more bleed** → live preview → lift to **commit** |
+| **Remember threshold** | Last committed threshold persists for next ColorDrop (session + UserDefaults) |
+| **Continue Filling** | After a commit, optional mode: tap other closed regions to fill with same color/threshold (no re-drag from disc); exit on tool change / confirm |
+| **Fill tool** | `ToolMode::Fill`: tap = fill at point (same engine path as ColorDrop); hold-drag adjusts threshold like ColorDrop |
+| **Reference** | Layers panel: mark one layer as Reference (line art). ColorDrop on a **different** active layer uses Reference pixels as flood boundaries |
+
+```text
+                    ColorDrop / Fill tap
+                            │
+                            ▼
+              seed (canvas x,y) + color + threshold
+                            │
+         ┌──────────────────┴──────────────────┐
+         ▼                                     ▼
+   Boundary source                      Paint target
+   (Reference layer if set,             (active layer only)
+    else active layer)
+         │                                     │
+         └──────── flood mask ─────────────────┘
+                            │
+                            ▼
+              write fill color into active (src-over / replace)
+              dirty AABB → GPU layer upload → present
+```
+
+### Boundary & threshold semantics
+
+Flood-fill walks 4-connected (v1) neighbors from the seed.
+
+| Concept | Rule |
+|---------|------|
+| **Seed color** | Sample boundary-source pixel at seed (premultiplied RGBA). Transparent seed → fill transparent / near-empty region until opaque ink |
+| **Same region** | Neighbor is “inside” if color distance to seed ≤ `threshold` (see metric below) |
+| **Boundary** | Neighbor fails the threshold test → stop (do not paint that pixel) |
+| **Canvas edge** | Always a hard stop |
+| **Gaps in line art** | Fill leaks through gaps — expected; user raises threshold carefully or closes gaps with brush |
+| **Threshold 0** | Strict: only near-exact seed color (tight pockets) |
+| **Threshold ~1** | Aggressive: bleeds through soft / anti-aliased edges into neighbors (can flood whole layer) |
+
+**Color distance (v1):** max-channel delta in straight RGBA, or CIE-ish luma+chroma later:
+
+```text
+dist(a, b) = max(|a.r-b.r|, |a.g-b.g|, |a.b-b.b|, |a.a-b.a|) / 255
+inside     = dist(neighbor, seedColor) <= threshold
+```
+
+**ponytail:** Start with max-channel + 4-connected CPU scan. If AA fringing is ugly, upgrade to 8-connected + separate alpha weight, or a 1px morphological “close gaps” pass — don’t ship both on day one.
+
+**Anti-flood guard:** If preview mask area &gt; ~95% of layer and threshold was not explicitly maxed, clamp remembered threshold slightly below 1 (Procreate remembers ~97.6% instead of 100%) and/or require confirm — avoid accidental full-canvas fills.
+
+### Reference layer
+
+| Rule | Detail |
+|------|--------|
+| Count | **At most one** `isReference == true` layer in the document |
+| Setting | `setLayerReference(layerId, true)` clears any previous reference |
+| Fill target | Always **active** layer (must not be the Reference layer itself for the “ink vs color” workflow; if active == reference, behave as normal same-layer fill) |
+| Boundary read | Sample **Reference** layer RGBA (ignore its opacity/visibility for boundary? **v1:** use raw layer buffer; skip if reference invisible — treat as no reference) |
+| Paint write | Active layer only; Reference pixels unchanged |
+| Background Layer | May be Reference (unusual); cannot remove Background |
+
+Cartoon / manga workflow: Line layer = Reference; Color layer = active → ColorDrop flats without destroying ink.
+
+### Hybrid / data model
+
+Fill is **raster-first** (unlike brush strokes). Do not pretend a flood is a vector polyline.
+
+```text
+FillOp {
+  layerId           // paint target (active at commit)
+  referenceLayerId  // -1 if none
+  seedX, seedY      // canvas px
+  color RGBA
+  threshold         // 0..1 snapshot at commit
+  bounds            // dirty AABB of painted pixels
+  // undo payload (T3): RLE mask of written pixels OR tile snapshots before write
+}
+```
+
+| Phase | Behavior |
+|-------|----------|
+| Preview | Compute mask into scratch; composite fill color over active **without** committing; update present dirty rect |
+| Commit | Apply mask → active layer pixels; append `FillOp` to layer op list (or history); clear preview |
+| Undo (T3) | Restore previous pixels under mask (tile snapshot / RLE inverse) — **not** “re-flood” |
+| Re-raster strokes | Fill sits **above** regenerable stroke raster for that layer **or** is baked into layer RGBA after strokes — pick one: |
+
+**Decision (v1):** Bake fill into the **layer RGBA cache** like a committed raster edit. Stroke list stays authoritative for ink; fills are separate `FillOp` records so undo can remove them without replaying every stroke. On full layer rebuild (rare): replay strokes then replay `FillOp`s in order.
+
+**ponytail:** Until T3, commit fill directly to layer pixels + keep last `FillOp` for a single-level undo if cheap; otherwise rely on upcoming history.
+
+### Live preview (threshold drag)
+
+1. On ColorDrop hold: run flood at current threshold → preview overlay (or write to transient texture).
+2. On horizontal drag: remap pointer delta → threshold; **re-flood** from same seed (debounce to 1× per frame / 8ms).
+3. On lift: commit; persist threshold.
+4. Cancel: Escape / second finger / tool change → discard preview, no pixel change.
+
+Large canvas: flood only within a growing AABB or tile set; abort if mask exceeds budget and show “threshold too high”.
+
+### Engine vs UI
+
+| Layer | Owns |
+|-------|------|
+| **UI** | Color disc drag → canvas seed; threshold bar chrome; Continue Filling banner; Reference toggle in Layers panel; confirm on huge fills |
+| **Engine** | Flood algorithm, threshold metric, Reference sampling, preview/commit, dirty rects, `FillOp` record |
+| **Not engine** | Color picker UI, disc hit-testing in Swift chrome |
+
+### Public API (planned)
+
+```cpp
+enum class ToolMode : int32_t {
+    Brush = 0,
+    Eraser = 1,
+    Pointer = 2,
+    Fill = 3,   // tap-to-fill + threshold hold
+};
+
+/// Threshold 0..1 (bleed). Persisted by UI; engine keeps last set value.
+void setFillThreshold(float t);
+float fillThreshold() const;
+
+/// Preview flood (no commit). outBounds optional AABB of mask.
+bool previewFillAt(float x, float y, float threshold,
+                   float* outMinX, float* outMinY, float* outMaxX, float* outMaxY);
+
+/// Commit flood with session color + threshold (or explicit args).
+bool commitFillAt(float x, float y, float threshold);
+
+/// One-shot: preview+commit with current fillThreshold + brush color (ColorDrop lift).
+bool fillAt(float x, float y);
+
+void setContinueFilling(bool on);
+bool continueFilling() const;
+
+bool setLayerReference(int32_t layerId, bool isReference);
+bool layerIsReference(int32_t layerId) const;
+int32_t referenceLayerId() const;   // -1 if none
+```
+
+Color for fill = current `setBrushColor` / session color (same disc). No separate fill-color API in v1.
+
+**Swift ColorDrop path:** map disc-drop view point → `viewToCanvas*` → `previewFillAt` while held → `commitFillAt` on lift. Continue Filling: subsequent taps call `fillAt`.
+
+### Algorithm sketch (CPU v1)
+
+```text
+seed = round(x,y) clamped to layer
+src  = referenceLayerId >= 0 ? layer(reference) : layer(active)
+dst  = layer(active)
+seedColor = src.pixel(seed)
+queue BFS/scanline from seed
+for each pixel p in region where dist(src[p], seedColor) <= threshold:
+    if preview: mask[p] = 1
+    else: dst[p] = srcOver(fillColor, dst[p])  // or replace if fillOpacity==1
+track dirty AABB
+upload dirty tiles to GPU layer texture
+```
+
+**Scanline fill** preferred over naive BFS for cache locality on large flats.
+
+**GPU later (optional):** compute shader flood is non-trivial (multi-pass / label propagate). Keep CPU for v1; Metal only if Instruments shows fill &gt; frame budget on iPad.
+
+### Interaction with other features
+
+| Feature | Interaction |
+|---------|-------------|
+| Brush / Eraser | Switching tool exits Continue Filling; commits or cancels preview |
+| Alpha lock (later) | Fill only where active layer alpha &gt; 0 |
+| Selection (later) | Clip flood mask to selection |
+| Layer opacity / blend | Fill writes pre-blend layer pixels; opacity applies at composite |
+| Background Layer | Fill allowed if active; usually user fills paint layers instead |
+| Undo T3 | `FillCommand` with mask RLE + previous texels (or tile snapshots) |
+| Timelapse | Log `FillOp` seed/color/threshold/bounds |
+| Export SVG | Fills stay raster (embedded) unless later vectorized |
+
+### File / module layout (add)
+
+```text
+src/
+  tools/
+    FillSession.hpp          // threshold, continueFilling
+  render/
+    FloodFill.hpp/.cpp       // scanline flood; preview mask; apply to layer
+  // FillOp record beside strokes/ or layers/
+```
+
+### Phased delivery (T1-8)
+
+| Phase | Roadmap | Deliverable |
+|-------|---------|-------------|
+| Core flood | **T1-8-1** | CPU scanline fill on active layer; `fillAt` / threshold; dirty upload |
+| ColorDrop UX | **T1-8-2** | Swift: drag color disc → preview + threshold bar → commit; remember threshold |
+| Continue Filling | **T1-8-3** | Post-commit tap-to-fill mode; exit chrome |
+| Reference layer | **T1-8-4** | `isReference` flag; boundary from reference; Layers panel toggle |
+| History | **T1-8-5** | `FillCommand` for T3 (can land with T3-*) |
+| Self-check | **T1-8-6** | Closed box fixture; threshold leak; reference isolation |
+
+### Self-check targets (fill)
+
+1. Closed black ring on transparent layer → `fillAt` center → interior ≈ fill color; exterior unchanged.
+2. Gap in ring + high threshold → fill leaks outside (document expected).
+3. Low threshold → stops at anti-aliased edge sooner than high threshold.
+4. Reference layer has ring; active empty → fill paints active interior; reference pixels unchanged.
+5. Fill does not modify non-active layers.
+6. Preview then cancel → active layer hash unchanged.
+
+### Out of scope (fill v1)
+
+- Gradient / pattern / texture fill  
+- Fill Layer menu that ignores seed (whole-layer tint) — trivial wrapper later  
+- Recolor (replace color range)  
+- Vector “fill path” from stroke closed contour  
+- Multi-layer / group fill  
+- On-device ML gap closing  
+
+---
+
 ## Undo / redo interaction (design now, implement T3)
 
 Even if **T3** lands later, **T1** stroke storage must not paint itself into a corner:
 
 - On `endStroke`, engine is ready to emit `StrokeCommand { layerId, stroke }` for history.
 - On move/adjust commit: `TransformStrokeCommand { layerId, strokeId, dx, dy }` or `EditStrokePointCommand { … index, oldPt, newPt }` (inverse = easy undo).
-- Undo = detach stroke / inverse transform + invalidate bounds (not store 8MB bitmaps per stroke).
-- Timelapse op log can store the same stroke payload with timestamps.
+- On fill commit: `FillCommand { layerId, FillOp }` with RLE mask + previous texels (or dirty-tile snapshots) — inverse restores pixels under the mask.
+- Undo = detach stroke / inverse transform / restore fill mask (not store 8MB bitmaps per stroke when RLE fits).
+- Timelapse op log can store the same stroke / fill payload with timestamps.
 
 ---
 
@@ -680,6 +921,7 @@ src/
     BrushSession.hpp           // pre-draw overrides (lineWidth, lineSmooth, …)
     BrushLibrary.hpp/.cpp
     BrushAssetStore.hpp/.cpp   // tip/grain/preview PNG bytes
+    FillSession.hpp            // threshold, continueFilling (T1-8)
     procreate/
       ProcreateBrushImporter.hpp/.cpp
       ProcreateBrushMap.mm     // bplist key → BrushPreset (ObjC++)
@@ -688,10 +930,12 @@ src/
     Stroke.hpp                 // samples + lazy cubics (ensureCubics)
     StrokeSample.hpp
     // StrokeEdit — planned with T2-6
+    // FillOp — planned with T1-8
   render/
     StrokeRasterizer.hpp/.cpp  // CPU; tip stamp
     MetalStrokeRasterizer.*    // compute dab path
     LayerCompositor.*          // GPU blend
+    FloodFill.hpp/.cpp         // scanline ColorDrop (T1-8)
   math/
     Blend.hpp / Rect.hpp / TileGrid.hpp
     Bezier.hpp/.cpp            // Eigen fit (lazy / export)
@@ -710,9 +954,10 @@ Stroke input smoothing + rasterize live in `IllusStudioCanvasEditor` (no separat
 | Live overlay + dirty tiles | **T1-2** |
 | Metal compute rasterizer | **T1-3** |
 | GPU layer composite | **T1-4** |
+| Procreate `.brush` / `.brushset` import | **T1-7** |
+| Color Fill / ColorDrop (+ Reference layer) | **T1-8** |
 | Easy move / adjust line | **T2-6** |
 | Bézier fit / tilt / tile index | **T2-7** |
-| Procreate `.brush` / `.brushset` import | **T1-7** |
 
 Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
 
@@ -729,6 +974,7 @@ Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
 | Move / adjust | Re-raster **union(old,new) bounds** tiles on **one layer** only |
 | Hit-test | O(strokes on that layer × samples) with bounds reject; spatial index later if needed |
 | Undo | Re-raster **stroke bounds** tiles from vector, not whole canvas unless bounds ≈ full frame |
+| Fill (ColorDrop) | Flood + preview re-flood ≤ 1× / frame; scanline; abort if mask ≫ budget |
 | Memory | Lazy layer textures; empty layers allocate nothing (keep current rule) |
 
 **Shared device:** `metalDeviceAddress()` for MTKView (already required).
@@ -740,6 +986,23 @@ Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
 ## API sketch (public)
 
 **Shipped** (see [API.md](API.md) / `CanvasEditor.hpp`): `ToolMode`, brush set/preset listing, session setters, `importBrushPackage*`, stroke stream, `strokeCountOnLayer`.
+
+**Planned (T1-8)** — Color Fill / ColorDrop:
+
+```cpp
+// ToolMode gains Fill = 3
+void setFillThreshold(float t);
+float fillThreshold() const;
+bool previewFillAt(float x, float y, float threshold,
+                   float* outMinX, float* outMinY, float* outMaxX, float* outMaxY);
+bool commitFillAt(float x, float y, float threshold);
+bool fillAt(float x, float y);
+void setContinueFilling(bool on);
+bool continueFilling() const;
+bool setLayerReference(int32_t layerId, bool isReference);
+bool layerIsReference(int32_t layerId) const;
+int32_t referenceLayerId() const;
+```
 
 **Planned (T2-6)** — layer-scoped vector query + edit:
 
@@ -770,8 +1033,9 @@ One runnable check covering hybrid invariants:
 6. **Move / adjust:** stroke on layer A; `translateStroke` shifts polyline; layer B unchanged; wrong `layerId` cannot see A’s stroke.
 7. **Import (T1-7):** fixture `.brush` → set +1; tip id set when PNG present.
 8. **Device:** `metalAvailable` ⇒ present texture non-null; Swift uses engine device.
+9. **Fill (T1-8):** closed ring → interior filled; reference isolation; cancel preview leaves hash unchanged.
 
-`CanvasEditor::selfCheck()` covers paint/erase/session/import/viewport/Bezier smoke paths.
+`CanvasEditor::selfCheck()` covers paint/erase/session/import/viewport/Bezier smoke paths (+ fill when T1-8 lands).
 
 ---
 
@@ -789,6 +1053,7 @@ T1-1…T1-4 migrated the old “stamp straight into CPU layer RGBA” path into:
 - Pressure/tilt re-paint while moving (v1 move is geometric translate; brush params stay on `presetSnapshot`)  
 - Full Illustrator-grade Bézier toolset (**T2-6** = polyline move + point adjust; rich curve UI later)  
 - Photoshop `.abr` import (Procreate can import ABR; we can add later as **T1-7-7**)  
+- Gradient / pattern fill; vector closed-path fill; ML gap closing (see Color Fill § Out of scope)  
 - Shipping or redistributing Procreate’s default brush packs  
 - Claiming full Procreate brush-engine parity  
 - Replacing SwiftUI page COP structure  
@@ -797,6 +1062,6 @@ T1-1…T1-4 migrated the old “stamp straight into CPU layer RGBA” path into:
 
 ## Summary
 
-Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` / `.brushlibrary` import** unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone.
+Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` / `.brushlibrary` import** unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone. **Color Fill (ColorDrop)** floods flats into closed regions with threshold + optional Reference layer for ink/color separation.
 
-**Shipped:** T1-1…T1-4, T1-7 (except grain / ABR), T2-7-1. **Next:** T2-6 move/adjust, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).
+**Shipped:** T1-1…T1-4, T1-7 (except grain / ABR), T2-7-1. **Next:** T1-8 Color Fill, T2-6 move/adjust, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).

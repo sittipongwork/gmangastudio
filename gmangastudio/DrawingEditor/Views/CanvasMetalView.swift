@@ -178,10 +178,13 @@ struct CanvasMetalView: NSViewRepresentable {
     var viewportOffsetY: Float = 0
     var highPerformancePresent: Bool = true
     var presentFps: Int = 72
+    var eyedropperActive: Bool = false
     var onDragChanged: (CGPoint) -> Void
     var onDragEnded: () -> Void
     var onPan: (CGSize, CGSize) -> Void
     var onZoom: (CGFloat, CGPoint, CGSize) -> Void
+    var onHoverMoved: (CGPoint, CGPoint) -> Void = { _, _ in }
+    var onEyedropperPick: (CGPoint, CGPoint) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -197,6 +200,7 @@ struct CanvasMetalView: NSViewRepresentable {
         view.delegate = context.coordinator.renderer
         context.coordinator.wireScroll(view)
         context.coordinator.attachGestures(to: view)
+        context.coordinator.wireHover(view)
         context.coordinator.renderer?.updateViewport(
             scale: viewportScale,
             offsetX: viewportOffsetX,
@@ -216,6 +220,7 @@ struct CanvasMetalView: NSViewRepresentable {
         applyPresentMode(to: nsView)
         if let flipped = nsView as? FlippedMTKView {
             context.coordinator.wireScroll(flipped)
+            context.coordinator.wireHover(flipped)
         }
     }
 
@@ -253,6 +258,20 @@ struct CanvasMetalView: NSViewRepresentable {
             }
         }
 
+        func wireHover(_ view: FlippedMTKView) {
+            view.hoverHandler = { [weak self] loc in
+                guard let self, self.parent.eyedropperActive else { return }
+                let canvas = self.canvasPoint(loc, in: view.bounds.size)
+                self.parent.onHoverMoved(loc, canvas)
+            }
+            view.clickHandler = { [weak self] loc in
+                guard let self, self.parent.eyedropperActive else { return false }
+                let canvas = self.canvasPoint(loc, in: view.bounds.size)
+                self.parent.onEyedropperPick(loc, canvas)
+                return true
+            }
+        }
+
         func attachGestures(to view: MTKView) {
             let draw = NSPanGestureRecognizer(target: self, action: #selector(handleDraw(_:)))
             draw.buttonMask = 0x1
@@ -270,6 +289,17 @@ struct CanvasMetalView: NSViewRepresentable {
             guard let view = g.view else { return }
             let loc = g.location(in: view)
             let p = canvasPoint(loc, in: view.bounds.size)
+            if parent.eyedropperActive {
+                switch g.state {
+                case .began, .changed:
+                    parent.onHoverMoved(loc, p)
+                case .ended, .cancelled:
+                    parent.onEyedropperPick(loc, p)
+                default:
+                    break
+                }
+                return
+            }
             switch g.state {
             case .began, .changed:
                 parent.onDragChanged(p)
@@ -323,8 +353,31 @@ struct CanvasMetalView: NSViewRepresentable {
 /// AppKit default is bottom-left; flip so gesture Y matches canvas (top-left, Y down).
 final class FlippedMTKView: MTKView {
     var scrollHandler: ((CGFloat, CGFloat, Bool, CGPoint) -> Void)?
+    var hoverHandler: ((CGPoint) -> Void)?
+    var clickHandler: ((CGPoint) -> Bool)?
 
     override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        let options: NSTrackingArea.Options = [
+            .activeInKeyWindow,
+            .mouseMoved,
+            .inVisibleRect,
+        ]
+        addTrackingArea(NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        hoverHandler?(convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let loc = convert(event.locationInWindow, from: nil)
+        if clickHandler?(loc) == true { return }
+        super.mouseDown(with: event)
+    }
 
     override func scrollWheel(with event: NSEvent) {
         scrollHandler?(
@@ -349,10 +402,13 @@ struct CanvasMetalView: UIViewRepresentable {
     var viewportOffsetY: Float = 0
     var highPerformancePresent: Bool = true
     var presentFps: Int = 72
+    var eyedropperActive: Bool = false
     var onDragChanged: (CGPoint) -> Void
     var onDragEnded: () -> Void
     var onPan: (CGSize, CGSize) -> Void
     var onZoom: (CGFloat, CGPoint, CGSize) -> Void
+    var onHoverMoved: (CGPoint, CGPoint) -> Void = { _, _ in }
+    var onEyedropperPick: (CGPoint, CGPoint) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -425,6 +481,17 @@ struct CanvasMetalView: UIViewRepresentable {
             let loc = g.location(in: g.view)
             let size = g.view?.bounds.size ?? .zero
             let p = canvasPoint(loc, in: size)
+            if parent.eyedropperActive {
+                switch g.state {
+                case .began, .changed:
+                    parent.onHoverMoved(loc, p)
+                case .ended, .cancelled:
+                    parent.onEyedropperPick(loc, p)
+                default:
+                    break
+                }
+                return
+            }
             switch g.state {
             case .began, .changed:
                 parent.onDragChanged(p)

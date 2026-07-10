@@ -174,6 +174,7 @@ UI also owns idle present (~5fps after 30s) — see [canvas_document.md](canvas_
 | Import / export (PNG, SVG, TIFF) | [canvas_document.md](canvas_document.md) · ROADMAP T4 |
 | Stroke hit-test / move / adjust | [brush_drawing.md](brush_drawing.md) · ROADMAP T2-6 |
 | Animation / timeline | [animation_timeline.md](animation_timeline.md) · ROADMAP T5 |
+| Color Fill / ColorDrop | [brush_drawing.md](brush_drawing.md) · ROADMAP T1-8 |
 | Photoshop `.abr` import | [brush_drawing.md](brush_drawing.md) · ROADMAP T1-7-7 |
 
 **UI-only (not on `CanvasEditor`):** App active status / idle present — implemented in DrawingEditor (`AppActiveStatus.swift`).
