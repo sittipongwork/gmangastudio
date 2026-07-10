@@ -1,0 +1,6 @@
+framework module GDrawingStudioFramework {
+    requires cplusplus
+    umbrella header "GDrawingStudioFramework.h"
+    export *
+    module * { export * }
+}

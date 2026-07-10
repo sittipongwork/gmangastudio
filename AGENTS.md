@@ -2,11 +2,16 @@
 
 SwiftUI app for manga studio work. **Primary targets: macOS and iPad (iPadOS).** Phone is secondary unless asked. Xcode project; keep diffs small and reuse Apple frameworks before adding anything new.
 
-The C++ canvas engine previously lived in this repo as `IllusStudioFramework`. It was **moved out** to `/Users/sittipongjungsakul/work/ai/IllusStudioFramework` and is **not** part of this Xcode project. DrawingEditor UI that depended on it is archived under that tree as `archived_from_gmangastudio/DrawingEditor`.
+C++ drawing engine: `GDrawingStudioFramework` (blank scaffold; Swift–C++ interop via `SWIFT_OBJC_INTEROP_MODE = objcxx`). The previous engine lived as `IllusStudioFramework` and was moved to `/Users/sittipongjungsakul/work/ai/IllusStudioFramework`.
 
 ## Project Structure
 
 ```text
+GDrawingStudioFramework/         C++ framework (engine) — blank scaffold
+  GDrawingStudioFramework.h      Umbrella header
+  GDrawingStudio.hpp             Public API stub (`gdrawing::version()`)
+  module.modulemap
+  src/                           Implementation
 gmangastudio/                    App sources (SwiftUI) — UI layer
   gmangastudioApp.swift          App entry (`@main`), window / scene setup
   ContentView.swift              Root shell (routes into page COPs)
