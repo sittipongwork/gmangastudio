@@ -2,6 +2,8 @@
 
 SwiftUI app for manga studio work. **Primary targets: macOS and iPad (iPadOS).** Phone is secondary unless asked. Xcode project; keep diffs small and reuse Apple frameworks before adding anything new.
 
+The C++ canvas engine previously lived in this repo as `IllusStudioFramework`. It was **moved out** to `/Users/sittipongjungsakul/work/ai/IllusStudioFramework` and is **not** part of this Xcode project. DrawingEditor UI that depended on it is archived under that tree as `archived_from_gmangastudio/DrawingEditor`.
+
 ## Project Structure
 
 ```text
@@ -10,29 +12,8 @@ gmangastudio/                    App sources (SwiftUI) — UI layer
   ContentView.swift              Root shell (routes into page COPs)
   Assets.xcassets/               Colors, app icon
   Shared/                        Cross-page helpers (only when reused by 2+ pages)
-  DrawingEditor/                 Drawing page COP (imports IllusStudioFramework)
-    Views/DrawingEditorView.swift
-    ViewModels/DrawingEditorViewModel.swift
   <PageName>/                    One folder per page / feature (page COP)
     Views/  ViewModels/  Models/
-IllusStudioFramework/            Core canvas engine (C++) — separate framework target
-  README.md                      Architecture (read before engine work)
-  docs/ROADMAP.md                Tasks & status (T0…T6) — single checklist
-  docs/canvas_document.md        Page setting, zoom/pan, export
-  docs/layer.md                  Layer management
-  docs/brush_drawing.md          Hybrid brush / vector design + image import
-  docs/history.md                Undo / redo / timelapse
-  docs/animation_timeline.md     Animation & timeline
-  docs/AI_Integration.md         AI-assisted features
-  IllusStudioFramework.h         Umbrella (C++)
-  CanvasEditor.hpp               Public C++ API (Swift–C++ interop)
-  module.modulemap
-  src/
-    CanvasEditor.cpp             Public API impl (pimpl)
-    IllusStudioCanvasEditor.*    Internal facade
-    document/ layers/ render/ math/
-    render/MetalRenderer.*       Metal present texture (T6)
-  third_party/metal-cpp/         Apple metal-cpp headers
 gmangastudioTests/               Unit tests (mirror page folders when useful)
 gmangastudioUITests/             UI tests
 gmangastudio.xcodeproj/          Xcode project
@@ -78,46 +59,11 @@ gmangastudio/
 - Shared code moves to `Shared/` only after a second page needs it
 - Keep `ContentView` thin: host navigation / layout chrome, present page COPs
 
-## UI ↔ Framework flow
-
-Swift UI talks to the public C++ API via Swift–C++ interop. No C bridge.
-
-```text
-+-------------------------------------------------------+
-|                 UI Layer (Swift / SwiftUI)            |  <-- Xcode Managed
-+-------------------------------------------------------+
-                           │ ▲
-                           ▼ │  (Swift–C++ interop)
-+-------------------------------------------------------+
-|          Public C++ API (`illus::CanvasEditor`)       |
-+-------------------------------------------------------+
-                           │ ▲
-                           ▼ │
-+-------------------------------------------------------+
-|     IllusStudioCanvasEditor / Core (C++)              |  <-- This framework
-+-------------------------------------------------------+
-```
-
-| Layer | Owns | Does not own |
-|-------|------|--------------|
-| **UI** (Swift / SwiftUI) | Page COPs, ViewModels, windowing, input, MTKView present | Stroke math, layer compositing |
-| **Public C++ API** | `CanvasEditor.hpp` — stable surface for Swift | Internal headers under `src/` |
-| **Core** (C++) | Document, layers, tools, render, Metal upload | App chrome |
-
-**Flow rules**
-
-- UI → `illus::CanvasEditor` → internal engine
-- Keep `CanvasEditor.hpp` small and Swift-importable (avoid `void*`; use `uintptr_t` for Metal handles)
-- Put new canvas logic in the engine; put new screens in page COPs
-- App target uses `SWIFT_OBJC_INTEROP_MODE = objcxx`
-
 ## Stack
 
 - SwiftUI + Swift (UI layer, Xcode-managed app target)
-- **IllusStudioFramework** — C++ engine + `CanvasEditor` (`import IllusStudioFramework`); architecture: [IllusStudioFramework/README.md](IllusStudioFramework/README.md); tasks: [IllusStudioFramework/docs/ROADMAP.md](IllusStudioFramework/docs/ROADMAP.md)
 - Xcode / Apple SDKs (no package manager unless one is added later)
 - Design and test for **Mac** and **iPad** first (pointer/trackpad, large canvas, split views)
-- Drawing present path targets **120fps** on high-refresh displays (do not throttle below 1/120 s)
 - Deployment targets follow the Xcode project settings
 
 ## Conventions

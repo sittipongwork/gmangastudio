@@ -11,7 +11,7 @@ import SwiftUI
 struct gmangastudioApp: App {
     var body: some Scene {
         WindowGroup {
-            DrawingEditorView()
+            ContentView()
         }
         .defaultSize(width: 1920, height: 1080)
     }
