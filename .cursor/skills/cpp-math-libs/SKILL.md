@@ -14,18 +14,22 @@ Apply when introducing or writing math that goes beyond the small helpers in `Il
 ## Decision ladder (pick first that holds)
 
 1. **Already in-tree?** Reuse `math/Rect.hpp`, `Viewport`, scalar float — no new lib.
-2. **Graphics / Metal / viewport / dab orientation?** → **GLM** (header-only, GLSL-like).
-3. **Solve / SVD / large dense or sparse systems / curve fit with matrices?** → **Eigen**.
-4. **Neither?** Keep a tiny POD (`struct Vec2 { float x,y; }`) in `math/` — do not pull GLM for one `dot`.
+2. **Axis-aligned present / zoom / pan @ 120Hz?** → **Scalar** (`presentNdcRect` or UI from cached viewport). **Not GLM.**
+3. **Real mat4 / quat (canvas rotate, MVP, tip orientation matrix)?** → **GLM**.
+4. **Solve / SVD / least-squares curve fit (export / offline)?** → **Eigen** — **lazy**, never under stroke mutex.
+5. **Neither?** Keep a tiny POD (`struct Vec2 { float x,y; }`) in `math/` — do not pull GLM for one `dot`.
 
 | Need | Prefer | Avoid |
 |------|--------|--------|
-| `mat4` / `vec3` / quat for present / camera / tip rotate | GLM | Eigen (heavier compile, wrong API feel) |
-| Least-squares, Bézier fit solve, PCA | Eigen | Hand-rolled Gauss or GLM |
-| Per-pixel dab inner loop | Scalars / small POD | Eigen expressions, GLM `mat4` per pixel |
-| Swift–C++ public API | Plain `float` / `int32_t` | Exposing GLM/Eigen types in `CanvasEditor.hpp` |
+| Present NDC (fit × scale + pan) | Scalar | GLM every frame |
+| `mat4` / quat for rotate / MVP / tip matrix | GLM | Eigen; hand-rolled mat4 |
+| Least-squares Bézier / PCA (export) | Eigen lazy | Fit on every `endStroke` |
+| Per-pixel dab / blend | Scalars / POD | Eigen, GLM |
+| Swift–C++ public API | Plain `float` / `int32_t` | GLM/Eigen in `CanvasEditor.hpp` |
 
-**Vendoring (when adding):** put under `IllusStudioFramework/third_party/glm/` or `…/eigen/` like metal-cpp; header-only include paths only. No package manager unless the project already has one.
+**Keep vs remove:** Keep vendored GLM + Eigen while SVG cubics and/or canvas rotate remain on the roadmap. Removing them does not fix idle 120Hz present CPU. See [ROADMAP TX-7](../../IllusStudioFramework/docs/ROADMAP.md#tx-7--math-libraries-glm--eigen).
+
+**Vendoring:** `IllusStudioFramework/third_party/glm/` or `…/eigen/`; use **SYSTEM_HEADER_SEARCH_PATHS** (`-isystem`) so vendor doc-comments stay quiet.
 
 ## GLM — good vs bad
 
@@ -145,6 +149,32 @@ M = (M * A).eval();  // or use a temporary
 - Prefer `Matrix2f` / `Vector2f` / `Matrix4f` over `MatrixXf` when size is known.
 - `#include <Eigen/Dense>` only in `.cpp` that need it; keep headers free of Eigen when possible (compile times).
 - Don't mix GLM `mat4` and Eigen `Matrix4f` without an explicit conversion helper in one place.
+
+## Benchmark — measure before putting libs on hot paths
+
+Runnable microbench (not in the Xcode target):
+
+```bash
+clang++ -O2 -std=c++20 -DNDEBUG \
+  -I IllusStudioFramework/src \
+  -isystem IllusStudioFramework/third_party/eigen \
+  -isystem IllusStudioFramework/third_party/glm \
+  IllusStudioFramework/src/math/Bezier.cpp \
+  IllusStudioFramework/src/math/PresentTransform.cpp \
+  IllusStudioFramework/tools/tx7_math_bench.cpp \
+  -o /tmp/tx7_math_bench && /tmp/tx7_math_bench
+```
+
+Compare **`-O2 -DNDEBUG`** (ship) vs **`-O0`** (typical Xcode Debug). Numbers below are from one Apple Silicon run; re-run locally.
+
+| Path | Release `-O2` | Debug `-O0` |
+|------|---------------|-------------|
+| Present NDC **scalar** | ~7 ns/op | ~34 ns/op |
+| Present NDC **GLM mat4** | ~6 ns/op (~same) | ~770 ns/op (**~23×** vs scalar) |
+| endStroke **skip fit** | ~5 ns | ~14 ns |
+| endStroke **Eigen fit** (50…1000 samples) | ~24…59 µs | ~0.7…2.6 **ms** |
+
+**Takeaway:** Keep libs; use **scalar present** + **lazy Eigen**. In Debug, GLM-on-present and Eigen-on-pen-up caused Activity Monitor spikes. Do not remove third_party “for CPU” while T4 SVG / rotate still planned.
 
 ## Project integration checklist
 

@@ -19,7 +19,7 @@ Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Spe
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
 | [T5](#t5--animation--timeline) | Animation & timeline | open |
 | [T6](#t6--metal-present-120hz) | Metal present @ 120Hz | done |
-| [TX-7](#tx-7--math-libraries-glm--eigen) | Math libs (GLM + Eigen) | open (gated) |
+| [TX-7](#tx-7--math-libraries-glm--eigen) | Math libs (GLM + Eigen) | done — keep vendored; **scalar hot path** (see TX-7 policy) |
 
 ---
 
@@ -133,7 +133,7 @@ Layer-scoped vector query + edit. Depends on **T1-1**. Gizmo overlay: [canvas_do
 
 ### T2-7 — Hybrid follow-ups (was T1-6)
 
-- [ ] **T2-7-1** Optional Bézier fit on `endStroke` (`math/Bezier` + **Eigen**, see [TX-7-3](#tx-7--math-libraries-glm--eigen) / TX-7-4) for storage / SVG
+- [x] **T2-7-1** Optional Bézier fit (`math/Bezier` + **Eigen**, see [TX-7](#tx-7--math-libraries-glm--eigen)) — **`Stroke::ensureCubics` / `ensureStrokeCubics` lazy**; not under `endStroke` mutex
 - [ ] **T2-7-2** Tilt-aware `beginStrokeEx` / `continueStrokeEx` when UI ready
 - [ ] **T2-7-3** Stroke→tile index if undo/re-raster becomes hot
 
@@ -229,15 +229,29 @@ Former **P5**.
 
 ### TX-7 — Math libraries (GLM / Eigen)
 
-Policy & samples: [cpp-math-libs skill](../../.cursor/skills/cpp-math-libs/SKILL.md). Vendor only when a real consumer lands — not “for readiness.” No GLM/Eigen types in public `CanvasEditor.hpp`.
+Policy & samples: [cpp-math-libs skill](../../.cursor/skills/cpp-math-libs/SKILL.md). Microbench: `tools/tx7_math_bench.cpp`.  
+**Keep** vendored GLM + Eigen. **Do not** put them on stroke/dab/120Hz present hot paths.
 
-- [ ] **TX-7-0** Policy locked: decision ladder in skill; no GLM/Eigen in public API; hot path stays scalar/POD
-- [ ] **TX-7-1** Vendor **GLM** under `IllusStudioFramework/third_party/glm/` + HEADER_SEARCH_PATHS (same pattern as metal-cpp) — **gate:** first engine consumer that needs `mat4` / `value_ptr` (engine-built present MVP **or** canvas rotate leaving T2 v1-out)
-- [ ] **TX-7-2** Use GLM only in render/present (or rotate) `.cpp`; keep `Viewport` POD; self-check round-trip / MVP dump if non-trivial
-- [ ] **TX-7-3** Vendor **Eigen** under `IllusStudioFramework/third_party/eigen/` + include path — **gate:** start of **T2-7-1**
-- [ ] **TX-7-4** `math/Bezier` fit uses Eigen fixed/dynamic dense solve **once** on `endStroke`; no Eigen in `stampDab` / `presentMetalTexture`
-- [ ] **TX-7-5** Compile-time hygiene: specific GLM headers; Eigen includes in `.cpp` only where possible; document in README third_party note
-- [ ] **TX-7-6** Explicit non-goals: replace `math/Blend` / `Rect` with GLM; Eigen in dab loops; both libs for the same 2D transform without a single conversion helper
+#### Best-use conditions (locked)
+
+| Path | Use | Do not use |
+|------|-----|------------|
+| Present NDC (axis-aligned zoom/pan @ ≤120Hz) | **Scalar** (`presentNdcRect` / Swift from cached viewport) | GLM `mat4` every frame |
+| Canvas rotate / MVP / tip orientation matrix | **GLM** (`presentModelMatrix` or equivalent) | Hand-rolled mat4; Eigen |
+| Stroke while drawing / `endStroke` | Dense `samples` only | Eigen under editor mutex |
+| SVG / storage cubic export (T4) | **Eigen** `fitStrokeCubics` **lazy** (when cubics empty) | Fit on every pen-up |
+| Dab / blend / composite | Scalar / POD (`math/Blend`, `Rect`) | GLM or Eigen |
+| Public `CanvasEditor.hpp` | `float` / `int32_t` / POD buffers | GLM/Eigen types |
+
+- [x] **TX-7-0** Policy locked: decision ladder in skill; no GLM/Eigen in public API; hot path stays scalar/POD
+- [x] **TX-7-1** Vendor **GLM** under `IllusStudioFramework/third_party/glm/` + system include path — consumer: `presentModelMatrix` (rotate/MVP ready); **not** required for axis-aligned present
+- [x] **TX-7-2** GLM only in render/present `.cpp` for real transforms; `presentNdcRect` stays **scalar**; `Viewport` POD; UI may cache scale/offset for present (avoid extra mutex per frame)
+- [x] **TX-7-3** Vendor **Eigen** under `IllusStudioFramework/third_party/eigen/` + system include path — for **T2-7-1** / export
+- [x] **TX-7-4** `math/Bezier` uses Eigen dense solve; **lazy** via `ensureStrokeCubics` / export — **not** on `endStroke` / dab / present
+- [x] **TX-7-5** Compile-time hygiene: specific GLM headers; Eigen in `.cpp` only; `-isystem` for third_party; README note
+- [x] **TX-7-6** Non-goals: replace `math/Blend` / `Rect` with GLM; Eigen in dab loops; both libs for the same 2D transform without one conversion helper; remove libs “for CPU” while SVG/rotate still planned
+
+**Remove libs only if** SVG cubic export and canvas rotate are explicitly cancelled (YAGNI). Idle ~30% CPU is mostly T6 120Hz present, not TX-7.
 
 ---
 
@@ -251,10 +265,10 @@ T0 (done) → T6 (done)
          → T1-7 (Procreate import; T1-7-1 can start after T1-1-5; tip stamp after T1-1-3)
          → T2-1…T2-5 (viewport; done; can parallel T1 after T1-1)
          → T2-6 (move/adjust)
-         → T2-7-1 (Bézier; vendor Eigen TX-7-3/4 with it) → T2-7-2 / T2-7-3
-         → TX-7-1/2 (GLM) only when present MVP / rotate needs it
+         → T2-7-2 / T2-7-3 (fit already lazy; T4 export calls ensureStrokeCubics)
          → T3 (history; needs T1-1 stroke list)
          → T4 → T5
+         (TX-7 done — keep libs; follow best-use table above)
 ```
 
 ---

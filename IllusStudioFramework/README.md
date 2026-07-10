@@ -151,9 +151,13 @@ Detailed specs live under `docs/` — expand those files, not this README.
 
 ### Image processing & math
 
-- Hot paths live in `math/`: float/premultiplied RGBA, blend, dab spacing, viewport matrices.
-- **No new third-party math library** unless a measured bottleneck requires it.
-- Optional later: SIMD / Accelerate — only after CPU profiler evidence.
+- Hot paths live in `math/`: float/premultiplied RGBA, blend, dab spacing, viewport (**scalar**).
+- **Vendored math libs** (keep; gated use — [docs/ROADMAP.md](docs/ROADMAP.md) TX-7 best-use table + [cpp-math-libs skill](../.cursor/skills/cpp-math-libs/SKILL.md)):
+  - `third_party/eigen/` (**5.0.1**) — `math/Bezier` least-squares; **lazy** on export (`ensureStrokeCubics`), never under `endStroke` mutex
+  - `third_party/glm/` (**1.0.3**) — `presentModelMatrix` / canvas rotate later; **axis-aligned present stays scalar**
+- No GLM/Eigen types in public `CanvasEditor.hpp`.
+- Microbench: `tools/tx7_math_bench.cpp`.
+- Optional later: SIMD / Accelerate — only after CPU profiler evidence ([TX-4](docs/ROADMAP.md)).
 
 ### Display refresh (120fps)
 

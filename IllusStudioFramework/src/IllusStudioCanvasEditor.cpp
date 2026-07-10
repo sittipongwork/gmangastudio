@@ -6,6 +6,9 @@
 #include "IllusStudioCanvasEditor.hpp"
 
 #include "math/Blend.hpp"
+#include "math/Bezier.hpp"
+#include "math/PresentTransform.hpp"
+#include "render/MetalStrokeRasterizer.hpp"
 #include "render/SoftwareRenderer.hpp"
 #include "render/StrokeRasterizer.hpp"
 #include "tools/procreate/FixtureBrushBytes.hpp"
@@ -81,6 +84,17 @@ float IllusStudioCanvasEditor::canvasToViewY(float canvasX, float canvasY, float
     float x = 0.f, y = 0.f;
     viewport_.canvasToView(canvasX, canvasY, viewW, viewH, static_cast<float>(page_.width), static_cast<float>(page_.height), x, y);
     return y;
+}
+
+void IllusStudioCanvasEditor::presentNdcRect(float viewW, float viewH, float out[4]) const {
+    ::illus::presentNdcRect(
+        viewport_,
+        static_cast<float>(page_.width),
+        static_cast<float>(page_.height),
+        viewW,
+        viewH,
+        out
+    );
 }
 
 LayerStrokeList& IllusStudioCanvasEditor::strokeListFor(int32_t layerId) {
@@ -351,6 +365,8 @@ void IllusStudioCanvasEditor::endStroke() {
     }
     strokeUsesOverlay_ = false;
     if (!liveStroke_.samples.empty()) {
+        // T2-7-1: keep dense samples; fit cubics lazily (export/SVG) — Eigen under
+        // this mutex blocked present and spiked CPU on every pen-up.
         strokeListFor(liveStroke_.layerId).strokes.push_back(std::move(liveStroke_));
     }
     liveStroke_ = Stroke{};
@@ -851,6 +867,27 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (std::abs(rx - cx) > 1e-3f || std::abs(ry - cy) > 1e-3f) return false;
         if (std::abs(editor.viewport().scale - 2.f) > 1e-6f) return false;
         if (std::abs(editor.viewport().offsetX - 10.f) > 1e-6f) return false;
+    }
+
+    // TX-7: Eigen Bézier fit + present NDC (fit is opt-in, not on endStroke).
+    if (!bezierSelfCheck()) return false;
+    if (!presentTransformSelfCheck()) return false;
+    {
+        IllusStudioCanvasEditor editor(32, 32);
+        editor.beginStroke(4, 4, 1);
+        editor.continueStroke(8, 6, 1);
+        editor.continueStroke(12, 4, 1);
+        editor.continueStroke(16, 8, 1);
+        editor.endStroke();
+        LayerStrokeList& list = editor.strokeListFor(editor.layers().activeId());
+        if (list.strokes.empty()) return false;
+        fitStrokeCubics(list.strokes[0].samples, list.strokes[0].cubics, 2.f);
+        if (list.strokes[0].cubics.empty()) return false;
+        list.strokes[0].cubics.clear();
+        if (!list.strokes[0].ensureCubics(2.f)) return false;
+        float ndc[4];
+        editor.presentNdcRect(64.f, 64.f, ndc);
+        if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[3])) return false;
     }
 
     // T1-7: fixture .brush import → set + tip texture + tip stamp paints.

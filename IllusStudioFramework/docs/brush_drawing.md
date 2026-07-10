@@ -269,7 +269,7 @@ Stroke {
   layerId
   presetSnapshot     // resolved BrushPreset (library ⊕ session) at stroke start — immutable
   samples[]          // raw input (editable for adjust; translate for move)
-  path               // optional: fitted cubic Bézier segments (lazy, on endStroke or idle)
+  path / cubics      // optional: fitted cubics (lazy on export — not on endStroke)
   bounds             // canvas AABB of stamped coverage (recompute after edit)
 }
 
@@ -289,15 +289,16 @@ LayerStrokeList {
 |-------|--------------|--------------|
 | `beginStroke` | Create `Stroke` on active layer; append first sample | Clear “live” overlay tiles; stamp first dab |
 | `continueStroke` | Append samples; update bounds | Incremental rasterize new segment only |
-| `endStroke` | Commit stroke into layer’s stroke list; optional curve fit | Merge live tiles into layer texture; clear live overlay |
+| `endStroke` | Commit stroke (dense samples only; cubics empty) | Merge live tiles into layer texture; clear live overlay |
 | Move / adjust | Mutate that stroke’s samples/path; recompute bounds | Invalidate old∪new bounds → re-raster affected tiles |
 | Undo | Remove last stroke (or apply inverse / un-transform) | Invalidate stroke bounds → re-raster affected tiles from remaining strokes |
 
 ### Curve fitting (optional in T1-1, recommended in T2-7)
 
 - **T1-1 minimum:** store dense `StrokeSample[]`; rasterizer walks samples with dab spacing (same as today).
-- **T2-7-1:** on `endStroke`, fit cubics (`math/` Bézier) for storage + SVG; keep samples if fit error is high.
-- Fitting must be **lossy compression of input**, not a second source of truth that diverges from what was painted — rasterize from the same representation you store, or re-raster from samples after fit only if visual delta is within epsilon (self-check).
+- **T2-7-1:** `math/Bezier` + **Eigen** for storage / SVG — call **`ensureStrokeCubics` / `fitStrokeCubics` lazily** (export T4), **not** on `endStroke` under the editor mutex ([TX-7](ROADMAP.md#tx-7--math-libraries-glm--eigen)).
+- If fit error is high, leave `cubics` empty and keep samples.
+- Fitting must be **lossy compression of input**, not a second source of truth that diverges from what was painted — rasterize from samples (or re-raster after fit only if visual delta is within epsilon; self-check).
 
 ### Eraser as vector
 
@@ -682,7 +683,7 @@ src/
     LayerCompositor.hpp/.cpp   // GPU blend path (can follow rasterizer)
   math/
     Dab.hpp                    // spacing, hardness falloff, lineSmooth filter
-    Bezier.hpp                 // optional fit
+    Bezier.hpp                 // optional Eigen fit (lazy / export)
 ```
 
 Wire through `IllusStudioCanvasEditor`; expose only what Swift needs on `CanvasEditor`.
@@ -711,7 +712,8 @@ Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
 |------|----------------|
 | Sample append | O(1) / event |
 | Rasterize segment | O(dirty pixels × dabs in segment) — tile clipped |
-| Present | No full CPU layer stack walk every frame once **T1-4** lands |
+| Present | No full CPU layer stack walk every frame once **T1-4** lands; NDC = scalar (no GLM @ 120Hz) |
+| Curve fit | Off hot path — Eigen only on export / demand |
 | Move / adjust | Re-raster **union(old,new) bounds** tiles on **one layer** only |
 | Hit-test | O(strokes on that layer × samples) with bounds reject; spatial index later if needed |
 | Undo | Re-raster **stroke bounds** tiles from vector, not whole canvas unless bounds ≈ full frame |

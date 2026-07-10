@@ -414,6 +414,13 @@ float CanvasEditor::canvasToViewY(float canvasX, float canvasY, float viewW, flo
     return impl_->editor.canvasToViewY(canvasX, canvasY, viewW, viewH);
 }
 
+bool CanvasEditor::copyPresentNdcRect(float viewW, float viewH, float* out4, int32_t outCount) const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (!out4 || outCount < 4) return false;
+    impl_->editor.presentNdcRect(viewW, viewH, out4);
+    return true;
+}
+
 std::uintptr_t CanvasEditor::presentMetalTextureAddress() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return reinterpret_cast<std::uintptr_t>(impl_->editor.presentMetalTexture());

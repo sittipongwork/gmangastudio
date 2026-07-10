@@ -56,7 +56,10 @@ int32_t BrushAssetStore::addImageBytes(const uint8_t* data, int32_t size, const 
         8,
         w * 4u,
         space,
-        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+        static_cast<CGBitmapInfo>(
+            static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) |
+            static_cast<uint32_t>(kCGBitmapByteOrder32Big)
+        )
     );
     CGColorSpaceRelease(space);
     if (!ctx) {

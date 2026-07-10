@@ -37,6 +37,9 @@ _(Add page templates, DPI, resize rules, background-as-layer vs clear color, etc
 - Viewport is a present-time transform: pan/zoom must **not** re-raster strokes.
 - Pointer events reaching tools are always in **canvas space** (UI or engine maps view → canvas).
 - Self-check target: view→canvas→view round-trip within epsilon.
+- **Present NDC (axis-aligned):** use **scalar** math (`Viewport` scale/offset → NDC). Do **not** build a GLM `mat4` every frame ([TX-7](ROADMAP.md#tx-7--math-libraries-glm--eigen)).
+- **UI present path:** cache `viewportScale` / offsets on the Metal renderer (update when viewport changes); avoid locking the editor 3× per frame just for NDC.
+- **Rotate canvas (later):** switch present to GLM `presentModelMatrix` / MVP once — still not per dab.
 
 _(Add min/max scale, focus-point zoom, fit-to-view, etc. here.)_
 

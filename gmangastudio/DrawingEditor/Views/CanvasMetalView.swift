@@ -22,6 +22,10 @@ final class CanvasMetalRenderer: NSObject, MTKViewDelegate {
     private var editor: illus.CanvasEditor
     private let canvasWidth: Float
     private let canvasHeight: Float
+    /// Cached present viewport (TX-7): update on pan/zoom — avoid 3× editor locks per frame.
+    private var viewportScale: Float = 1
+    private var viewportOffsetX: Float = 0
+    private var viewportOffsetY: Float = 0
 
     init?(editor: illus.CanvasEditor, canvasWidth: Int32, canvasHeight: Int32) {
         // Must share the editor's MTLDevice — cross-device texture sample = EXC_BAD_ACCESS.
@@ -97,11 +101,20 @@ final class CanvasMetalRenderer: NSObject, MTKViewDelegate {
         self.editor = editor
         self.canvasWidth = Float(canvasWidth)
         self.canvasHeight = Float(canvasHeight)
+        self.viewportScale = editor.viewportScale()
+        self.viewportOffsetX = editor.viewportOffsetX()
+        self.viewportOffsetY = editor.viewportOffsetY()
         super.init()
     }
 
     func updateEditor(_ editor: illus.CanvasEditor) {
         self.editor = editor
+    }
+
+    func updateViewport(scale: Float, offsetX: Float, offsetY: Float) {
+        viewportScale = scale
+        viewportOffsetX = offsetX
+        viewportOffsetY = offsetY
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -129,19 +142,19 @@ final class CanvasMetalRenderer: NSObject, MTKViewDelegate {
             return
         }
 
-        // Present-time viewport: fit × user scale + pan (no re-raster).
+        // Scalar NDC from cached viewport (TX-7 best use) — no GLM, no extra editor locks.
         let fit = min(dw / canvasWidth, dh / canvasHeight)
-        let s = fit * editor.viewportScale()
+        let s = fit * viewportScale
         let drawnW = canvasWidth * s
         let drawnH = canvasHeight * s
-        let originX = (dw - drawnW) * 0.5 - editor.viewportOffsetX() * s
-        let originY = (dh - drawnH) * 0.5 - editor.viewportOffsetY() * s
-        // NDC: x left→right, y bottom→top. View Y is top-down.
-        let xmin = -1 + 2 * originX / dw
-        let xmax = -1 + 2 * (originX + drawnW) / dw
-        let ymax = 1 - 2 * originY / dh
-        let ymin = 1 - 2 * (originY + drawnH) / dh
-        var uniforms = SIMD4<Float>(xmin, ymin, xmax, ymax)
+        let originX = (dw - drawnW) * 0.5 - viewportOffsetX * s
+        let originY = (dh - drawnH) * 0.5 - viewportOffsetY * s
+        var uniforms = SIMD4<Float>(
+            -1 + 2 * originX / dw,
+            1 - 2 * (originY + drawnH) / dh,
+            -1 + 2 * (originX + drawnW) / dw,
+            1 - 2 * originY / dh
+        )
 
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
@@ -160,6 +173,9 @@ struct CanvasMetalView: NSViewRepresentable {
     let editor: illus.CanvasEditor
     let canvasWidth: Int32
     let canvasHeight: Int32
+    var viewportScale: Float = 1
+    var viewportOffsetX: Float = 0
+    var viewportOffsetY: Float = 0
     var highPerformancePresent: Bool = true
     var presentFps: Int = 72
     var onDragChanged: (CGPoint) -> Void
@@ -181,12 +197,22 @@ struct CanvasMetalView: NSViewRepresentable {
         view.delegate = context.coordinator.renderer
         context.coordinator.wireScroll(view)
         context.coordinator.attachGestures(to: view)
+        context.coordinator.renderer?.updateViewport(
+            scale: viewportScale,
+            offsetX: viewportOffsetX,
+            offsetY: viewportOffsetY
+        )
         return view
     }
 
     func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.renderer?.updateEditor(editor)
+        context.coordinator.renderer?.updateViewport(
+            scale: viewportScale,
+            offsetX: viewportOffsetX,
+            offsetY: viewportOffsetY
+        )
         applyPresentMode(to: nsView)
         if let flipped = nsView as? FlippedMTKView {
             context.coordinator.wireScroll(flipped)
@@ -318,6 +344,9 @@ struct CanvasMetalView: UIViewRepresentable {
     let editor: illus.CanvasEditor
     let canvasWidth: Int32
     let canvasHeight: Int32
+    var viewportScale: Float = 1
+    var viewportOffsetX: Float = 0
+    var viewportOffsetY: Float = 0
     var highPerformancePresent: Bool = true
     var presentFps: Int = 72
     var onDragChanged: (CGPoint) -> Void
@@ -338,12 +367,22 @@ struct CanvasMetalView: UIViewRepresentable {
         applyPresentMode(to: view)
         view.delegate = context.coordinator.renderer
         context.coordinator.attachGestures(to: view)
+        context.coordinator.renderer?.updateViewport(
+            scale: viewportScale,
+            offsetX: viewportOffsetX,
+            offsetY: viewportOffsetY
+        )
         return view
     }
 
     func updateUIView(_ uiView: MTKView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.renderer?.updateEditor(editor)
+        context.coordinator.renderer?.updateViewport(
+            scale: viewportScale,
+            offsetX: viewportOffsetX,
+            offsetY: viewportOffsetY
+        )
         applyPresentMode(to: uiView)
     }
 

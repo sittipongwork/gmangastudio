@@ -67,6 +67,10 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				README.md,
+				tools,
+				"third_party/eigen",
+				"third_party/glm",
+				"third_party/metal-cpp",
 			);
 			publicHeaders = (
 				CanvasEditor.hpp,
@@ -96,6 +100,10 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A10000102FFF74E900E36EDE /* Exceptions for "IllusStudioFramework" folder in "IllusStudioFramework" target */,
+			);
+			explicitFolders = (
+				third_party,
+				tools,
 			);
 			path = IllusStudioFramework;
 			sourceTree = "<group>";
@@ -737,7 +745,12 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/IllusStudioFramework/src",
+				);
+				SYSTEM_HEADER_SEARCH_PATHS = (
+					"$(inherited)",
 					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
+					"$(SRCROOT)/IllusStudioFramework/third_party/eigen",
+					"$(SRCROOT)/IllusStudioFramework/third_party/glm",
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
@@ -793,7 +806,12 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/IllusStudioFramework/src",
+				);
+				SYSTEM_HEADER_SEARCH_PATHS = (
+					"$(inherited)",
 					"$(SRCROOT)/IllusStudioFramework/third_party/metal-cpp",
+					"$(SRCROOT)/IllusStudioFramework/third_party/eigen",
+					"$(SRCROOT)/IllusStudioFramework/third_party/glm",
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";

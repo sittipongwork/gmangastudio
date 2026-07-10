@@ -124,8 +124,9 @@ Present-time transform only — does **not** re-raster strokes.
 | `viewToCanvasY(viewX, viewY, viewW, viewH)` | `float` | |
 | `canvasToViewX(canvasX, canvasY, viewW, viewH)` | `float` | Canvas → view |
 | `canvasToViewY(canvasX, canvasY, viewW, viewH)` | `float` | |
+| `copyPresentNdcRect(viewW, viewH, out4, outCount)` | `bool` | Scalar NDC xmin/ymin/xmax/ymax; for tests / rotate prep — UI present may use cached viewport instead |
 
-Spec: [canvas_document.md](canvas_document.md) § Zoom & pan
+Spec: [canvas_document.md](canvas_document.md) § Zoom & pan · Math policy: [ROADMAP TX-7](ROADMAP.md#tx-7--math-libraries-glm--eigen)
 
 ---
 

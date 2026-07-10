@@ -126,6 +126,9 @@ public:
     float canvasToViewX(float canvasX, float canvasY, float viewW, float viewH) const;
     float canvasToViewY(float canvasX, float canvasY, float viewW, float viewH) const;
 
+    /// Present NDC quad (xmin, ymin, xmax, ymax) for Metal. `out4` must hold 4 floats.
+    bool copyPresentNdcRect(float viewW, float viewH, float* out4, int32_t outCount) const;
+
     /// Borrowed MTLTexture* as address (owned by editor). 0 if Metal unavailable.
     std::uintptr_t presentMetalTextureAddress();
     /// Borrowed MTLDevice* as address (owned by editor). Use this for MTKView —

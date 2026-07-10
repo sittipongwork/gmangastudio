@@ -6,6 +6,7 @@
 #pragma once
 
 #include "StrokeSample.hpp"
+#include "../math/Bezier.hpp"
 #include "../tools/BrushPreset.hpp"
 
 #include <cstdint>
@@ -47,8 +48,13 @@ struct Stroke {
     BrushPreset presetSnapshot{};
     std::vector<StrokeSample> samples;
     StrokeBounds bounds;
-};
+    /// Optional cubics (T2-7-1 / TX-7): fill via `ensureStrokeCubics` on export — empty while painting.
+    std::vector<BezierCubic> cubics;
 
+    bool ensureCubics(float maxErrPx = 2.f) {
+        return ensureStrokeCubics(samples, cubics, maxErrPx);
+    }
+};
 struct LayerStrokeList {
     int32_t layerId = 0;
     std::vector<Stroke> strokes;

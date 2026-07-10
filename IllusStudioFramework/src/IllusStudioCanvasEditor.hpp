@@ -47,6 +47,9 @@ public:
     float canvasToViewX(float canvasX, float canvasY, float viewW, float viewH) const;
     float canvasToViewY(float canvasX, float canvasY, float viewW, float viewH) const;
 
+    /// Present NDC quad via GLM (TX-7). Writes xmin,ymin,xmax,ymax.
+    void presentNdcRect(float viewW, float viewH, float out[4]) const;
+
     void markDirty();
 
     void clearActiveLayer();

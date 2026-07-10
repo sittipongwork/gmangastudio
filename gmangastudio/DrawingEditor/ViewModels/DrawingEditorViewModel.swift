@@ -23,6 +23,10 @@ final class DrawingEditorViewModel {
     private(set) var metalAvailable: Bool
     private(set) var editor: illus.CanvasEditor
     private(set) var zoomPercent: Int = 100
+    /// Mirrored viewport for Metal present (TX-7: no per-frame editor locks for NDC).
+    private(set) var viewportScale: Float = 1
+    private(set) var viewportOffsetX: Float = 0
+    private(set) var viewportOffsetY: Float = 0
     private(set) var appActiveStatus: AppActiveStatus = .performanceMode
     /// App-recommended present rate (120 if exact, else 72).
     private(set) var presentFps: Int = 72
@@ -72,7 +76,7 @@ final class DrawingEditorViewModel {
         metalAvailable = ed.metalAvailable()
         editor = ed
         presentFps = fps
-        syncZoomLabel()
+        syncViewportFromEditor()
         reloadBrushLibrary()
         reloadLayers()
         scheduleIdleCheck()
@@ -291,7 +295,7 @@ final class DrawingEditorViewModel {
         var ed = editor
         ed.setViewport(1, 0, 0)
         editor = ed
-        syncZoomLabel()
+        syncViewportFromEditor()
     }
 
     /// `delta` is view-space pixels (points). Converted to canvas-space pan.
@@ -312,6 +316,7 @@ final class DrawingEditorViewModel {
             ed.viewportOffsetY() - Float(delta.height) / s
         )
         editor = ed
+        syncViewportFromEditor()
     }
 
     /// Zoom by `factor` around view-space focus point.
@@ -338,7 +343,7 @@ final class DrawingEditorViewModel {
             ed.viewportOffsetY() + (beforeY - afterY)
         )
         editor = ed
-        syncZoomLabel()
+        syncViewportFromEditor()
     }
 
     func pointerChanged(at point: CGPoint) {
@@ -365,8 +370,12 @@ final class DrawingEditorViewModel {
         reloadLayers()
     }
 
-    private func syncZoomLabel() {
-        zoomPercent = Int((editor.viewportScale() * 100).rounded())
+    private func syncViewportFromEditor() {
+        let ed = editor
+        viewportScale = ed.viewportScale()
+        viewportOffsetX = ed.viewportOffsetX()
+        viewportOffsetY = ed.viewportOffsetY()
+        zoomPercent = Int((viewportScale * 100).rounded())
     }
 
     /// 120 when the panel can run it exactly; else 72 (144Hz divisor; avoids 60→48).
