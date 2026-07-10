@@ -1,9 +1,10 @@
 # Hybrid drawing — Brush library & eraser
 
-Feature spec + design for brush library, eraser, and the **Hybrid (Vector + Raster)** pipeline so the app keeps vector integrity (undo, edit, sharp export) and raster fluidity (soft brushes, blur, fill, 120fps present).
+Feature spec + design for brush library, eraser, and the **Hybrid (Vector + Raster)** pipeline so the app keeps vector integrity (undo, edit, sharp export) and raster fluidity (soft brushes, blur, fill, high-rate present).
 
-**Tasks & status:** [ROADMAP.md](ROADMAP.md)  
-Related: [README.md](../README.md) · [layer.md](layer.md) · [canvas_document.md](canvas_document.md) · [history.md](history.md) · [AGENTS.md](../../AGENTS.md)
+**Status (code):** T1-1…T1-4, T1-7 (tip stamp + import UX), T2-7-1 done. Open: T2-6 move/adjust, T1-7-3b grain multiply, T3 history, image import (T4-1).  
+**Tasks & checkboxes:** [ROADMAP.md](ROADMAP.md)  
+Related: [README.md](../README.md) · [API.md](API.md) · [layer.md](layer.md) · [canvas_document.md](canvas_document.md) · [history.md](history.md) · [AGENTS.md](../../AGENTS.md)
 
 ---
 
@@ -11,9 +12,9 @@ Related: [README.md](../README.md) · [layer.md](layer.md) · [canvas_document.m
 
 | | |
 |--|--|
-| **Inputs** | Tool mode (brush/eraser); preset id; **pre-draw** line width, line smooth, hardness, opacity, flow, spacing, pressure gains, color; pointer stream with pressure; optional Procreate `.brush` / `.brushset` import |
+| **Inputs** | Tool mode (brush/eraser); preset id; **pre-draw** line width, line smooth, hardness, opacity, flow, spacing, pressure gains, color; pointer stream with pressure; Procreate `.brush` / `.brushset` / `.brushlibrary` import |
 | **State** | `BrushLibrary` + sets; `BrushSession` overrides; vector strokes on active layer; regenerable raster cache; tip/grain assets |
-| **API** | Stroke stream + session setters; layer-scoped stroke query/edit (move/adjust); `importBrushPackage` (**T1-7**) |
+| **API** | Stroke stream + session setters + `importBrushPackage` / `importBrushPackageBytes` (**shipped**); layer-scoped stroke query/edit (**T2-6**, planned) |
 | **Eraser** | Dest-out on active layer; recorded as vector stroke |
 | **v1 out** | Dual brush, smudge, wet-mix parity, full Procreate engine clone, shipping Procreate default packs |
 
@@ -150,24 +151,26 @@ illus::CanvasEditor                    ← public API (Swift–C++ interop)
        │
        ▼
 IllusStudioCanvasEditor
-  ├── tools/           BrushPreset library, ToolMode, StrokeEngine
-  ├── strokes/         Vector Stroke / StrokeSample (Data Layer)
-  ├── history/         StrokeCommand (T3; design for it with T1)
-  ├── layers/          Layer id + optional GPU texture handle
+  ├── tools/           BrushLibrary, BrushSession, BrushAssetStore
+  │     └── procreate/ ProcreateBrushImporter, ProcreateBrushMap
+  ├── strokes/         Stroke / StrokeSample (Data Layer)
+  ├── history/         StrokeCommand (planned T3)
+  ├── layers/          Layer id + GPU texture handle
   └── render/
-        ├── StrokeRasterizer   Vector → layer texture (Compute or CPU)
-        ├── LayerCompositor    Blend layer textures → present texture
-        └── MetalRenderer      Present / device (T6 done)
+        ├── StrokeRasterizer        Vector → layer (CPU; tip stamp)
+        ├── MetalStrokeRasterizer   Compute dab path (T1-3)
+        ├── LayerCompositor         Blend layer textures → present
+        └── MetalRenderer           Present / device (T6)
 ```
 
 | Hybrid layer | Module / type | Notes |
 |--------------|---------------|--------|
 | Input | UI + `beginStroke` / `continueStroke` / `endStroke` | Canvas-space only; viewport maps in UI or `viewport/` |
 | Data (Vector) | `tools/` + `strokes/` | Never treat layer RGBA as the only stroke store |
-| Cache (Raster) | Per-layer `MTLTexture` (+ optional CPU tile fallback) | Dirty tiles only |
-| Display | GPU blend + existing MTKView path | Prefer blend layer textures; CPU composite is fallback / self-check |
+| Cache (Raster) | Per-layer `MTLTexture` (+ CPU fallback) | Dirty tiles only |
+| Display | GPU blend + MTKView path | Prefer blend layer textures; CPU composite is fallback / self-check |
 
-**Current code (pre-T1):** Soft brush stamps **directly** into a CPU layer buffer, then composites and uploads one present texture. **T1** migrates that stamp path into: append vector samples → rasterize into **layer** cache → GPU composite.
+**Current code:** Vector samples → `StrokeRasterizer` / `MetalStrokeRasterizer` into **layer** cache → GPU `LayerCompositor` → present. CPU `SoftwareRenderer` remains for self-check / export until T4.
 
 ---
 
@@ -293,12 +296,12 @@ LayerStrokeList {
 | Move / adjust | Mutate that stroke’s samples/path; recompute bounds | Invalidate old∪new bounds → re-raster affected tiles |
 | Undo | Remove last stroke (or apply inverse / un-transform) | Invalidate stroke bounds → re-raster affected tiles from remaining strokes |
 
-### Curve fitting (optional in T1-1, recommended in T2-7)
+### Curve fitting (T2-7-1 done — internal)
 
-- **T1-1 minimum:** store dense `StrokeSample[]`; rasterizer walks samples with dab spacing (same as today).
-- **T2-7-1:** `math/Bezier` + **Eigen** for storage / SVG — call **`ensureStrokeCubics` / `fitStrokeCubics` lazily** (export T4), **not** on `endStroke` under the editor mutex ([TX-7](ROADMAP.md#tx-7--math-libraries-glm--eigen)).
+- Dense `StrokeSample[]` is the paint source of truth; rasterizer walks samples with dab spacing.
+- **`math/Bezier` + Eigen:** `ensureStrokeCubics` / `fitStrokeCubics` **lazy** (export T4 / demand) — **not** on `endStroke` under the editor mutex ([TX-7](ROADMAP.md#tx-7--math-libraries-glm--eigen)).
 - If fit error is high, leave `cubics` empty and keep samples.
-- Fitting must be **lossy compression of input**, not a second source of truth that diverges from what was painted — rasterize from samples (or re-raster after fit only if visual delta is within epsilon; self-check).
+- No public cubic-export API yet (lands with T4 SVG).
 
 ### Eraser as vector
 
@@ -504,7 +507,9 @@ Smoothing is **input filtering** in the Data Layer (before samples land on the s
 
 ## Procreate-style brush import
 
-Goal: let users import brushes the way Procreate does — **`.brush`**, **`.brushset`**, and later **`.brushlibrary`** — into `BrushLibrary` sets, with tip/grain assets and a **best-effort** parameter map into `BrushPreset`.
+Goal: let users import brushes the way Procreate does — **`.brush`**, **`.brushset`**, and **`.brushlibrary`** — into `BrushLibrary` sets, with tip/grain assets and a **best-effort** parameter map into `BrushPreset`.
+
+**Status:** T1-7-1…T1-7-6 shipped (public API + DrawingEditor import UX). Open: grain multiply in dab path ([T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import)), Photoshop `.abr` ([T1-7-7](ROADMAP.md#t1-7--procreate-style-brush-import)).
 
 Procreate’s formats are **proprietary** (Savage Interactive). There is no official public schema. Community reverse-engineering (ZIP + PNG + `Brush.archive` bplist) is good enough for **import**, not for claiming 1:1 engine parity.
 
@@ -514,7 +519,7 @@ Procreate’s formats are **proprietary** (Savage Interactive). There is no offi
 |------|-------|--------------------|
 | `.brushset` | ZIP | Many brush folders + often `brushset.plist` |
 | `.brush` | ZIP (single brush) | One brush folder |
-| `.brushlibrary` | ZIP of sets | Later (**T1-7**); treat as multiple `.brushset` |
+| `.brushlibrary` | ZIP of sets | **Done** (T1-7-6); treat as multiple `.brushset` |
 
 Per-brush folder (names vary by Procreate version):
 
@@ -556,7 +561,7 @@ UI (DocumentPicker / drop)
 
 ### Parameter map (best-effort)
 
-Procreate key names change across versions; maintain a **synonym table** in `tools/ProcreateBrushMap`. Values below are conceptual targets, not guaranteed key strings.
+Procreate key names change across versions; maintain a **synonym table** in `src/tools/procreate/ProcreateBrushMap`. Values below are conceptual targets, not guaranteed key strings.
 
 | Our `BrushPreset` | Map from Procreate-ish params | Notes |
 |-------------------|------------------------------|--------|
@@ -584,11 +589,13 @@ Document in UI: **“Imported — approximated”** when any required key is mis
 |-----|----------|
 | No tip texture | Procedural round dab (current path) |
 | Tip PNG | Stamp tip centered on dab, scaled to effective width, rotated by `angleDeg` |
-| Grain | Optional multiply (T1-7 after tip stamps work) |
+| Grain | Optional multiply — **not wired yet** ([T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import)); `grainTextureId` stored on import |
 
 Import without tip stamp support is still useful: map numeric params onto round brushes so line width / smooth / opacity feel close.
 
 ### Public API (import)
+
+Shipped on `CanvasEditor` — see [API.md](API.md). Signatures:
 
 ```cpp
 enum class BrushPackageKind : int32_t {
@@ -598,30 +605,34 @@ enum class BrushPackageKind : int32_t {
     BrushLibrary = 3
 };
 
-/// Import from filesystem path (UI copies into app sandbox first if needed).
 /// Returns new BrushSet id, or -1 on failure. outBrushCount optional.
 int32_t importBrushPackage(const char* path, BrushPackageKind kind,
                            int32_t* outBrushCount);
 
-/// Optional: import from memory (AirDrop / in-memory drop).
 int32_t importBrushPackageBytes(const uint8_t* data, int32_t size,
-                                BrushPackageKind kind, int32_t* outBrushCount);
+                                BrushPackageKind kind,
+                                const char* suggestedName,
+                                int32_t* outBrushCount);
 
-int32_t brushSetCount() const;
-const char* brushSetName(int32_t setIndex) const;
-int32_t brushPresetCountInSet(int32_t setIndex) const;
-// … preset name / select by (setIndex, presetIndex)
+int32_t brushSetSource(int32_t setIndex) const;           // 0 BuiltIn, 1 User, 2 ImportedProcreate
+bool brushPresetApproximated(int32_t setIndex, int32_t presetIndex) const;
+bool setBrushPresetInSet(int32_t setIndex, int32_t presetIndex);
 ```
+
+DrawingEditor: `presentBrushImport()` / `fileImporter` + approximated badge in Brush Library widget.
 
 ### Phased import delivery
 
-| Phase | Roadmap | Deliverable |
-|-------|---------|-------------|
-| Unpack + assets | **T1-7-1** | Unzip `.brush` / `.brushset`; register PNGs; create set with **default** round params + tip if present |
-| Param map | **T1-7-2** | Decode `Brush.archive`; map size/opacity/spacing/smooth/hardness/pressure gains |
-| Tip stamp raster | **T1-7-3** | `StrokeRasterizer` stamps tip texture (CPU then Metal) |
-| Library UX | **T1-7-4** | Swift: Import button, Imported set list, approximate badge |
-| Grain / library file | **T1-7-5** | Grain multiply; `.brushlibrary` as multi-set |
+| Phase | Roadmap | Status | Deliverable |
+|-------|---------|--------|-------------|
+| Unpack + assets | **T1-7-1** | done | Unzip `.brush` / `.brushset`; register PNGs; create set |
+| Param map | **T1-7-2** | done | Decode `Brush.archive`; map size/opacity/spacing/smooth/hardness/pressure |
+| Tip stamp raster | **T1-7-3** | done | CPU + Metal tip texture stamp |
+| Public + listing APIs | **T1-7-4** | done | `importBrushPackage*`, `brushSetSource`, approximated |
+| Library UX | **T1-7-5** | done | Swift Import UI, Imported set, approximate badge |
+| `.brushlibrary` | **T1-7-6** | done | Multi-set package |
+| Grain multiply | **T1-7-3b** | open | Dab path uses `grainTextureId` |
+| Photoshop `.abr` | **T1-7-7** | open | Later if needed |
 
 ### Legal / product note
 
@@ -633,7 +644,7 @@ int32_t brushPresetCountInSet(int32_t setIndex) const;
 
 - Fixture tiny `.brush` (zip in test resources) → `importBrushPackage` → set count +1, tip texture non-null if PNG present.
 - Mapped `lineWidthPx` within expected clamp.
-- Stroke with imported tip darkens layer (after T1-7-3).
+- Stroke with imported tip darkens layer.
 
 ---
 
@@ -660,7 +671,7 @@ Even if **T3** lands later, **T1** stroke storage must not paint itself into a c
 
 ---
 
-## File / module layout (add under `src/`)
+## File / module layout (`src/`)
 
 ```text
 src/
@@ -669,24 +680,25 @@ src/
     BrushSession.hpp           // pre-draw overrides (lineWidth, lineSmooth, …)
     BrushLibrary.hpp/.cpp
     BrushAssetStore.hpp/.cpp   // tip/grain/preview PNG bytes
-    ToolMode.hpp
-    StrokeEngine.hpp/.cpp      // smooth input → samples + rasterize
     procreate/
       ProcreateBrushImporter.hpp/.cpp
-      ProcreateBrushMap.hpp/.cpp   // bplist key → BrushPreset
+      ProcreateBrushMap.mm     // bplist key → BrushPreset (ObjC++)
+      ZipReader.* / FixtureBrushBytes.*
   strokes/
-    Stroke.hpp/.cpp
+    Stroke.hpp                 // samples + lazy cubics (ensureCubics)
     StrokeSample.hpp
-    StrokeEdit.hpp/.cpp    // hit-test, translate, setPoint (layer-scoped)
+    // StrokeEdit — planned with T2-6
   render/
-    StrokeRasterizer.hpp/.cpp  // CPU first; tip stamp; Metal compute next
-    LayerCompositor.hpp/.cpp   // GPU blend path (can follow rasterizer)
+    StrokeRasterizer.hpp/.cpp  // CPU; tip stamp
+    MetalStrokeRasterizer.*    // compute dab path
+    LayerCompositor.*          // GPU blend
   math/
-    Dab.hpp                    // spacing, hardness falloff, lineSmooth filter
-    Bezier.hpp                 // optional Eigen fit (lazy / export)
+    Blend.hpp / Rect.hpp / TileGrid.hpp
+    Bezier.hpp/.cpp            // Eigen fit (lazy / export)
+    PresentTransform.hpp/.cpp  // scalar NDC + GLM MVP helper
 ```
 
-Wire through `IllusStudioCanvasEditor`; expose only what Swift needs on `CanvasEditor`.
+Stroke input smoothing + rasterize live in `IllusStudioCanvasEditor` (no separate `StrokeEngine`). Wire through the facade; expose only what Swift needs on `CanvasEditor`.
 
 ---
 
@@ -727,64 +739,22 @@ Do not track `[x]` / `[ ]` here — only in [ROADMAP.md](ROADMAP.md).
 
 ## API sketch (public)
 
+**Shipped** (see [API.md](API.md) / `CanvasEditor.hpp`): `ToolMode`, brush set/preset listing, session setters, `importBrushPackage*`, stroke stream, `strokeCountOnLayer`.
+
+**Planned (T2-6)** — layer-scoped vector query + edit:
+
 ```cpp
-// CanvasEditor.hpp — additive; names illustrative
-enum class ToolMode : int32_t { Brush = 0, Eraser = 1, Pointer = 2 };
-
-void setTool(ToolMode mode);
-ToolMode tool() const;
-
-int32_t brushSetCount() const;
-const char* brushSetName(int32_t setIndex) const;
-int32_t brushPresetCount() const;                    // flat, or use InSet variants
-int32_t brushPresetCountInSet(int32_t setIndex) const;
-const char* brushPresetName(int32_t index) const;
-void setBrushPreset(int32_t index);
-
-// Pre-draw session (BrushSession) — adjust before drawing
-void setBrushLineWidth(float px);
-float brushLineWidth() const;
-void setBrushLineSmooth(float s);                    // 0..1
-float brushLineSmooth() const;
-void setBrushHardness(float h);                      // 0..1
-void setBrushOpacity(float a);                       // 0..1
-void setBrushFlow(float f);                          // 0..1
-void setBrushSpacing(float spacing);                 // fraction of width
-void setBrushSizePressure(float g);                  // 0..1
-void setBrushOpacityPressure(float g);               // 0..1
-void setBrushColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
-void resetBrushSession();
-int32_t saveBrushSessionAsPreset(const char* name);  // new user preset id
-
-// Procreate-style import (T1-7)
-int32_t importBrushPackage(const char* path, int32_t kind, int32_t* outBrushCount);
-int32_t importBrushPackageBytes(const uint8_t* data, int32_t size,
-                                int32_t kind, int32_t* outBrushCount);
-
-void beginStroke(float x, float y, float pressure);
-void continueStroke(float x, float y, float pressure);
-void endStroke();
-
-// --- Layer-scoped vector query + edit (move / adjust line) ---
-// All of these operate on a single layerId (use activeLayerId() when UI is "inside" a layer).
-
-int32_t strokeCountOnLayer(int32_t layerId) const;
-int32_t strokeIdAt(int32_t layerId, int32_t index) const;   // index in layer stroke list
+int32_t strokeIdAt(int32_t layerId, int32_t index) const;
 bool strokeBounds(int32_t layerId, int32_t strokeId,
                   float* outMinX, float* outMinY, float* outMaxX, float* outMaxY) const;
-
-/// Hit-test strokes on one layer only. Returns stroke id, or -1.
 int32_t hitTestStroke(int32_t layerId, float x, float y, float radius) const;
-
-/// Copy polyline points for UI handles. Returns count written (or needed if out==null).
 int32_t copyStrokePolyline(int32_t layerId, int32_t strokeId,
                            float* outXY, int32_t maxPoints) const;
-
 bool translateStroke(int32_t layerId, int32_t strokeId, float dx, float dy);
 bool setStrokePoint(int32_t layerId, int32_t strokeId, int32_t pointIndex, float x, float y);
 ```
 
-Internal: never expose `std::vector<Stroke>` to Swift — use count + copy-into-buffer APIs (Swift-friendly).
+Internal: never expose `std::vector<Stroke>` to Swift — use count + copy-into-buffer APIs.
 
 ---
 
@@ -801,20 +771,13 @@ One runnable check covering hybrid invariants:
 7. **Import (T1-7):** fixture `.brush` → set +1; tip id set when PNG present.
 8. **Device:** `metalAvailable` ⇒ present texture non-null; Swift uses engine device.
 
-`CanvasEditor::selfCheck()` should call into `StrokeEngine` / rasterizer / `StrokeEdit` checks.
+`CanvasEditor::selfCheck()` covers paint/erase/session/import/viewport/Bezier smoke paths.
 
 ---
 
-## Migration from today’s stamp path
+## Migration note
 
-| Today | Hybrid target |
-|-------|----------------|
-| `stamp` writes layer CPU RGBA immediately | `stamp` becomes implementation detail of `StrokeRasterizer` |
-| No stroke list | `Stroke` list per layer |
-| One composite upload | Per-layer cache → GPU blend (phased) |
-| Brush hardcoded gray soft round | `BrushPreset` + eraser mode |
-
-Do **not** keep a parallel “pixels-only” stroke path after **T1-1** — one pipeline, CPU or Metal backend behind `StrokeRasterizer`.
+T1-1…T1-4 migrated the old “stamp straight into CPU layer RGBA” path into: append vector samples → rasterize into **layer** cache → GPU composite. Do **not** keep a parallel pixels-only stroke path — one pipeline, CPU or Metal backend behind `StrokeRasterizer` / `MetalStrokeRasterizer`.
 
 ---
 
@@ -825,7 +788,7 @@ Do **not** keep a parallel “pixels-only” stroke path after **T1-1** — one 
 - Multi-stroke lasso transform / document-wide vector dump  
 - Pressure/tilt re-paint while moving (v1 move is geometric translate; brush params stay on `presetSnapshot`)  
 - Full Illustrator-grade Bézier toolset (**T2-6** = polyline move + point adjust; rich curve UI later)  
-- Photoshop `.abr` import (Procreate can import ABR; we can add later as **T1-8**)  
+- Photoshop `.abr` import (Procreate can import ABR; we can add later as **T1-7-7**)  
 - Shipping or redistributing Procreate’s default brush packs  
 - Claiming full Procreate brush-engine parity  
 - Replacing SwiftUI page COP structure  
@@ -834,6 +797,6 @@ Do **not** keep a parallel “pixels-only” stroke path after **T1-1** — one 
 
 ## Summary
 
-Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` import** (**T1-7**) unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone.
+Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` / `.brushlibrary` import** unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone.
 
-Ship order and checkboxes: [ROADMAP.md](ROADMAP.md) — **T1-1** (incl. session props) → **T1-2** / **T1-3** / **T1-4** → **T1-7** (import; tip stamp can follow T1-1) → **T2-6** / **T2-7**.
+**Shipped:** T1-1…T1-4, T1-7 (except grain / ABR), T2-7-1. **Next:** T2-6 move/adjust, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).

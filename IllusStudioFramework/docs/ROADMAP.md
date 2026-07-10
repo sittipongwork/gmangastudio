@@ -13,8 +13,8 @@ Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Spe
 | Id | Epic | Status |
 |----|------|--------|
 | [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done (blend modes open) |
-| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import) | T1-1…T1-4 + T1-7 done (T1-3-3 / T1-7-7 open) |
-| [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) + move/adjust + hybrid follow-ups | T2-1…T2-5 done (T2-6 / T2-7 open) |
+| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import) | T1-1…T1-4 + T1-7 done (T1-3-3 / T1-7-3b / T1-7-7 open) |
+| [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) + move/adjust + hybrid follow-ups | T2-1…T2-5 + T2-7-1 done (T2-6 / T2-7-2/3 open) |
 | [T3](#t3--history-undo--redo--timelapse) | History (undo / redo / timelapse) | open |
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
 | [T5](#t5--animation--timeline) | Animation & timeline | open |
@@ -43,7 +43,7 @@ Former **P0**.
 
 Spec: [layer.md](layer.md) § Layer blending modes. Default for new layers: **`N` / Normal**.
 
-- [ ] **T0-12-0** Expand `BlendMode` enum (unique cases; UI badges may collide: H/S/L) — Normal already exists
+- [ ] **T0-12-0** Expand `BlendMode` enum (unique cases; UI badges may collide: H/S/L) — internal `BlendMode::Normal` already on `Layer`; catalog still open
 - [ ] **T0-12-1** Public `setLayerBlendMode` / `layerBlendMode`; new layers default **Normal**
 - [ ] **T0-12-2** CPU composite path: Darken group — Multiply, Darken, Color Burn, Linear Burn
 - [ ] **T0-12-3** CPU composite path: Lighten group — Screen, Lighten, Color Dodge, Add
@@ -98,8 +98,9 @@ Import `.brush` / `.brushset` (later `.brushlibrary`) into `BrushLibrary`. Desig
 
 - [x] **T1-7-1** Unzip package; discover brush folders; store tip/grain/preview PNGs in `BrushAssetStore`; create `BrushSet`
 - [x] **T1-7-2** Decode `Brush.archive` (bplist / NSKeyedArchiver shim); map → `lineWidth`, `lineSmooth`, hardness, opacity, spacing, pressure gains
-- [x] **T1-7-3** `StrokeRasterizer` tip-texture stamp (CPU then Metal); grain multiply optional after
-- [x] **T1-7-4** Public `importBrushPackage` / `importBrushPackageBytes` + set listing APIs
+- [x] **T1-7-3** `StrokeRasterizer` / `MetalStrokeRasterizer` tip-texture stamp (CPU + Metal)
+- [ ] **T1-7-3b** Grain multiply in dab path (`grainTextureId` stored; not wired in rasterizers yet)
+- [x] **T1-7-4** Public `importBrushPackage` / `importBrushPackageBytes` + set listing APIs (`brushSetSource`, `brushPresetApproximated`)
 - [x] **T1-7-5** Swift DrawingEditor: Import UI, Imported set, “approximated” badge
 - [x] **T1-7-6** `.brushlibrary` as multi-set; fixture self-check in repo test resources
 - [ ] **T1-7-7** (Later) Photoshop `.abr` import if still needed
@@ -209,10 +210,10 @@ Former **P5**.
 - [x] **T6-1** Vendored `third_party/metal-cpp`
 - [x] **T6-2** `render/MetalRenderer` — shared RGBA8 texture, dirty `replaceRegion`
 - [x] **T6-3** `presentMetalTextureAddress` / `metalDeviceAddress` / `metalAvailable`
-- [x] **T6-4** `CanvasMetalView` MTKView @ 120fps; shared device with engine
+- [x] **T6-4** `CanvasMetalView` MTKView; shared device with engine; adaptive **72 or 120** via `recommendedPresentFps()` + `setTargetPresentFps`
 - [x] **T6-5** Mutex on `CanvasEditor` for draw vs gesture
 - [x] **T6-6** CPU `SoftwareRenderer` kept for composite / self-check / fallback
-- [x] **T6-7** App active status (UI): `performance_mode` @ 120Hz vs `idle_mode` @ 5Hz continuous present; 30s idle ([canvas_document.md](canvas_document.md))
+- [x] **T6-7** App active status (UI): `performance_mode` (72/120) vs `idle_mode` @ 5Hz continuous present; 30s idle ([canvas_document.md](canvas_document.md))
 
 **Ongoing (covered by T1-3 / T1-4):** compute raster + GPU layer blend on top of this present path.
 
@@ -257,18 +258,17 @@ Policy & samples: [cpp-math-libs skill](../../.cursor/skills/cpp-math-libs/SKILL
 
 ## Suggested order
 
+**Done:** T0 (except T0-12) · T6 · T1-1…T1-4 · T1-7 (except grain T1-7-3b / ABR T1-7-7) · T2-1…T2-5 · T2-7-1 · TX-7
+
 ```text
-T0 (done) → T6 (done)
-         → T0-12 (layer blend modes; can parallel T1; Normal already)
-         → T1-1 (vector + BrushSession props)
-         → T1-2 → T1-3 → T1-4 (GPU blend uses T0-12 modes)
-         → T1-7 (Procreate import; T1-7-1 can start after T1-1-5; tip stamp after T1-1-3)
-         → T2-1…T2-5 (viewport; done; can parallel T1 after T1-1)
-         → T2-6 (move/adjust)
-         → T2-7-2 / T2-7-3 (fit already lazy; T4 export calls ensureStrokeCubics)
-         → T3 (history; needs T1-1 stroke list)
-         → T4 → T5
-         (TX-7 done — keep libs; follow best-use table above)
+Next:
+  T0-12 (layer blend modes; Normal already; can parallel T2-6)
+  → T2-6 (move/adjust + gizmo)
+  → T1-7-3b (grain multiply) when needed
+  → T2-7-2 / T2-7-3 (tilt; stroke→tile index)
+  → T3 (history; stroke list ready)
+  → T4 → T5
+  (TX-7 done — keep libs; follow best-use table above)
 ```
 
 ---

@@ -21,4 +21,6 @@ Related: [README.md](../README.md) · [canvas_document.md](canvas_document.md) �
 
 ## Detail
 
+**No code started** — `src/animation/` absent; `CanvasEditor.hpp` has zero timeline methods. Tracked as [T5](ROADMAP.md#t5--animation--timeline).
+
 _(Add cel model, onion-skin compositing, fps / playback, export of animated sequences, etc. here.)_

@@ -14,6 +14,8 @@ Related: [brush_drawing.md](brush_drawing.md) (image import / placement) · [lay
 |---------|--------|---------|
 | [Import reference image](#1-import-reference-image) | planned | Reference photo → AI line-art (+ flat color) → detect line/color → separate layers |
 
+**Dependency:** engine image import (`importRGBA`, [T4-1](ROADMAP.md#t4--import--export)) is not implemented yet — AI handoff waits on that API. Schedule AI work in [ROADMAP.md](ROADMAP.md) when ready.
+
 ---
 
 ## 1. Import reference image

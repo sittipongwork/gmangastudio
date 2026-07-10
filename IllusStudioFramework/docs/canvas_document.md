@@ -28,7 +28,7 @@ _(Add page templates, DPI, resize rules, background-as-layer vs clear color, etc
 |--|--|
 | **Inputs** | Scale, pan delta, or absolute `Viewport { scale, offset }`; optional focus point |
 | **State** | Viewport transform; dirty rects in canvas space |
-| **API** | `setViewport`, `viewportScale` / offsets, `viewToCanvas*` / `canvasToView*` |
+| **API** | `setViewport`, `viewportScale` / offsets, `viewToCanvas*` / `canvasToView*`, `copyPresentNdcRect` |
 | **Rules** | UI may drive gestures; **engine owns** transform math; tools receive **canvas-space** points |
 | **v1 out** | Rotate canvas, snap-to-pixel UI chrome |
 
@@ -38,7 +38,7 @@ _(Add page templates, DPI, resize rules, background-as-layer vs clear color, etc
 - Pointer events reaching tools are always in **canvas space** (UI or engine maps view → canvas).
 - Self-check target: view→canvas→view round-trip within epsilon.
 - **Present NDC (axis-aligned):** use **scalar** math (`Viewport` scale/offset → NDC). Do **not** build a GLM `mat4` every frame ([TX-7](ROADMAP.md#tx-7--math-libraries-glm--eigen)).
-- **UI present path:** cache `viewportScale` / offsets on the Metal renderer (update when viewport changes); avoid locking the editor 3× per frame just for NDC.
+- **UI present path:** DrawingEditor mirrors `viewportScale` / offsets on the ViewModel (`syncViewportFromEditor`) and feeds `CanvasMetalView`; avoid locking the editor 3× per frame via `copyPresentNdcRect` (API exists for tests / rotate prep).
 - **Rotate canvas (later):** switch present to GLM `presentModelMatrix` / MVP once — still not per dab.
 
 _(Add min/max scale, focus-point zoom, fit-to-view, etc. here.)_
@@ -97,13 +97,15 @@ GizmoMode gizmoMode() const;
 
 ## App active status
 
-UI-owned present performance gate. Keeps **120fps** while the user is working; drops to a low-power present when idle.
+**Status: implemented (Swift UI)** — `AppActiveStatus.swift` + `DrawingEditorViewModel` + `CanvasMetalView`. Not on `CanvasEditor`.
+
+UI-owned present performance gate. Keeps a high present rate while the user is working; drops to a low-power present when idle.
 
 | | |
 |--|--|
 | **Inputs** | User activity (tap / click, move, touch, pan, zoom, tool change, …) |
 | **State** | `AppActiveStatus` + `lastUse` timestamp (`lastuse_counting`) |
-| **API** | App / DrawingEditor owns this (not required on `CanvasEditor`) |
+| **API** | DrawingEditor owns this; engine complement: `setTargetPresentFps` / `targetPresentFps` |
 | **Rules** | Any activity → `performance_mode` and **reset** `lastUse`; idle ≥ **30s** → `idle_mode` |
 | **v1 out** | Per-window status when multi-document; background-app policy beyond idle |
 
@@ -111,13 +113,13 @@ UI-owned present performance gate. Keeps **120fps** while the user is working; d
 
 | Status | Default | Present |
 |--------|---------|---------|
-| **`performance_mode`** | Yes | High performance — continuous present @ **120fps** (when display supports it) |
-| **`idle_mode`** | After idle | Low refresh (**~5fps**) continuous present — lower GPU/CPU/display load; restore 120fps on next activity |
+| **`performance_mode`** | Yes | Adaptive high rate: **120fps** when the panel supports it exactly (`panelHz % 120 == 0`), else **72fps**; engine composite capped via `setTargetPresentFps(same)` |
+| **`idle_mode`** | After idle | Low refresh (**~5fps**) continuous present — lower GPU/CPU/display load; restore adaptive high rate on next activity |
 
 ### Idle rule (`lastuse_counting`)
 
 1. On enter / first show: `status = performance_mode`, `lastUse = now`.
-2. On **any** user action (tap, move, touch, scroll/pan, zoom, sidebar, toolbar): set `lastUse = now`; if was `idle_mode`, set `performance_mode` and restore 120fps present.
+2. On **any** user action (tap, move, touch, scroll/pan, zoom, sidebar, toolbar): set `lastUse = now`; if was `idle_mode`, set `performance_mode` and restore adaptive high-rate present.
 3. If `now - lastUse >= 30s` with no activity: set `status = idle_mode` and drop present to low refresh (~5fps).
 4. Mouse-only hover without click/drag does **not** count as activity (v1).
 
@@ -125,16 +127,18 @@ UI-owned present performance gate. Keeps **120fps** while the user is working; d
 
 ```text
 enum AppActiveStatus {
-    case performanceMode  // default — 120fps present (performance_mode)
+    case performanceMode  // default — 72 or 120fps present (performance_mode)
     case idleMode         // idle ≥ 30s — ~5fps present (idle_mode)
 }
 
 let idleTimeout: TimeInterval = 30
 let idlePresentFPS = 5
+// recommendedPresentFps(): 120 if panelMax >= 120 && panelMax % 120 == 0, else 72
 ```
 
 - Self-check: activity resets idle; after timeout without activity → `idle_mode`; activity from `idle_mode` → `performance_mode`.
 - `idle_mode` stays on a continuous present path (not fully paused) so the canvas can still refresh, but at a low rate to decrease hardware use.
+- ROADMAP: [T6-7](ROADMAP.md#t6--metal-present-120hz) done.
 ---
 
 ## Export (PNG / SVG / TIFF)
