@@ -2,7 +2,7 @@
 
 Feature spec + design for brush library, eraser, **Color Fill (ColorDrop)**, and the **Hybrid (Vector + Raster)** pipeline so the app keeps vector integrity (undo, edit, sharp export) and raster fluidity (soft brushes, blur, fill, high-rate present).
 
-**Status (code):** T1-1…T1-4, T1-7 (tip stamp + import UX), T2-7-1 done. Open: T2-6 move/adjust, T1-7-3b grain multiply, **T1-8 Color Fill**, T3 history, image import (T4-1).  
+**Status (code):** T1-1…T1-4, T1-7 (import UX + tip/grain assets stored), T2-7-1 done. Paint stamps **into the active layer** (procedural round; tip PNG stamp deferred). Open: T2-6 move/adjust, **T1-7-3b** tip silhouette + grain, **T1-8 Color Fill**, T3 history, image import (T4-1).  
 **Tasks & checkboxes:** [ROADMAP.md](ROADMAP.md)  
 Related: [README.md](../README.md) · [API.md](API.md) · [layer.md](layer.md) · [canvas_document.md](canvas_document.md) · [history.md](history.md) · [AGENTS.md](../../AGENTS.md)
 
@@ -158,8 +158,8 @@ IllusStudioCanvasEditor
   ├── history/         StrokeCommand (planned T3)
   ├── layers/          Layer id + GPU texture handle
   └── render/
-        ├── StrokeRasterizer        Vector → layer (CPU; tip stamp)
-        ├── MetalStrokeRasterizer   Compute dab path (T1-3)
+        ├── StrokeRasterizer        Vector → layer (CPU; procedural round)
+        ├── MetalStrokeRasterizer   Compute dab (exists; not hot path yet)
         ├── LayerCompositor         Blend layer textures → present
         └── MetalRenderer           Present / device (T6)
 ```
@@ -168,10 +168,10 @@ IllusStudioCanvasEditor
 |--------------|---------------|--------|
 | Input | UI + `beginStroke` / `continueStroke` / `endStroke` | Canvas-space only; viewport maps in UI or `viewport/` |
 | Data (Vector) | `tools/` + `strokes/` | Never treat layer RGBA as the only stroke store |
-| Cache (Raster) | Per-layer `MTLTexture` (+ CPU fallback) | Dirty tiles only |
+| Cache (Raster) | Per-layer `MTLTexture` (+ CPU fallback) | Dirty upload while stroking |
 | Display | GPU blend + MTKView path | Prefer blend layer textures; CPU composite is fallback / self-check |
 
-**Current code:** Vector samples → `StrokeRasterizer` / `MetalStrokeRasterizer` into **layer** cache → GPU `LayerCompositor` → present. CPU `SoftwareRenderer` remains for self-check / export until T4.
+**Current code:** Vector samples → CPU `StrokeRasterizer` into **layer** pixels → dirty GPU upload → `LayerCompositor` present. Soft paint live-overlay retired (overlap quality). Tip PNG stamp deferred to T1-7-3b.
 
 ---
 
@@ -291,11 +291,13 @@ LayerStrokeList {
 
 | Phase | Vector state | Raster state |
 |-------|--------------|--------------|
-| `beginStroke` | Create `Stroke` on active layer; append first sample | Clear “live” overlay tiles; stamp first dab |
-| `continueStroke` | Append samples; update bounds | Incremental rasterize new segment only |
-| `endStroke` | Commit stroke (dense samples only; cubics empty) | Merge live tiles into layer texture; clear live overlay |
+| `beginStroke` | Create `Stroke` on active layer; append first sample; snapshot `BrushSession` | Stamp first dab **into active layer** pixels; dirty-upload GPU layer texture |
+| `continueStroke` | Append samples; update bounds | Incremental stamp of new segment into layer; dirty-upload |
+| `endStroke` | Commit stroke (dense samples only; cubics empty) | Stroke already on layer; sync GPU if needed |
 | Move / adjust | Mutate that stroke’s samples/path; recompute bounds | Invalidate old∪new bounds → re-raster affected tiles |
 | Undo | Remove last stroke (or apply inverse / un-transform) | Invalidate stroke bounds → re-raster affected tiles from remaining strokes |
+
+**Why not live overlay for paint?** Soft strokes composited as a separate overlay on top of the layer went dark/noisy where strokes crossed (double soft coverage in present). Same-color paint uses `math::blendPaintOver` (keep brush RGB, accumulate alpha). Overlay merge helpers remain for a possible future path; paint+erase currently share the layer stamp path.
 
 ### Curve fitting (T2-7-1 done — internal)
 
@@ -367,31 +369,30 @@ LayerGpu {
 }
 ```
 
-Plus a **live stroke overlay** (one texture or tile set), composited above the active layer during the stroke so unfinished strokes do not rewrite the whole layer every dab.
+**Current paint path:** stamp into the active layer’s CPU pixels, then dirty-upload that layer’s `MTLTexture`. A live overlay texture still exists in `LayerCompositor` but is **not** used for paint (see Live stroke vs committed stroke).
 
 ### Vector → raster (real-time)
 
 ```text
 StrokeRasterizer
   input:  Stroke (or sample polyline) + BrushPreset + clip rect
-  output: writes into layer texture / live overlay (dirty region)
+  output: writes into active layer pixels (dirty region) → GPU upload
 ```
 
-**Preferred path (performance):** Metal **Compute** kernel:
+**Hot path (current):** CPU `StrokeRasterizer::stampDab` / `stampSegment` → `syncGpuLayer` dirty `replaceRegion`.
 
-- Threadgroup covers dirty tile (e.g. 32×32 or 16×16).
-- For each pixel, accumulate coverage from dabs along the new segment (or evaluate distance to polyline + hardness curve).
-- Paint: `src-over` with brush color × opacity × pressure curve.
-- Erase: `dest-out` with coverage × opacity × pressure.
+- Paint: `math::blendPaintOver` (same/near-same color → coverage accumulate; else straight-alpha src-over).
+- Erase: `math::blendDestOut`.
+- Layers stay **straight alpha**; `LayerCompositor` premultiplies at present.
 
-**Fallback path:** existing CPU stamp in `IllusStudioCanvasEditor::stamp` → `replaceRegion` upload (**T6**). Keep until compute shader is proven; same dirty-rect contract.
+**Metal compute dab** (`MetalStrokeRasterizer` / `stampDab` kernel) exists but is **not** on the hot stroke path (per-dab `waitUntilCompleted` was too slow). Re-enable when batched.
 
 ### Invalidation rules
 
 | Event | Invalidate |
 |-------|------------|
-| New dab / segment | Tiles intersecting dab AABB |
-| `endStroke` | Merge live → layer; mark present dirty |
+| New dab / segment | Tiles / dirty rect intersecting dab AABB; upload layer texture |
+| `endStroke` | Mark present dirty; GPU layer already synced during stroke |
 | Move / adjust stroke | Tiles intersecting **union(old bounds, new bounds)**; rebuild those tiles from that layer’s strokes |
 | Undo/redo stroke | Tiles intersecting that stroke’s `bounds`; rebuild from vector |
 | Clear layer | Release texture + clear stroke list |
@@ -399,9 +400,9 @@ StrokeRasterizer
 
 ### Separation from Display
 
-- Cache = **per-layer** (and live overlay).
-- Do **not** bake the full document into one CPU buffer as the only cache (current **T0** composite can remain as fallback / export helper).
-- Present path should evolve: **blend layer textures on GPU** → one drawable (Display). Until then: CPU composite + single upload remains acceptable as an intermediate.
+- Cache = **per-layer** textures (straight alpha).
+- Do **not** bake the full document into one CPU buffer as the only cache (CPU composite remains for export / fallback).
+- Present: **blend layer textures on GPU** → one drawable (Display).
 
 ---
 
@@ -418,7 +419,7 @@ Layer textures (N) + background
 ### Rules
 
 - Same `MTLDevice` for engine textures and `MTKView` (already required; cross-device sample = crash).
-- Target **120fps** present while stroking: only dirty tiles + live overlay update; full-stack blend can be full-frame but bandwidth-bound — keep layer count and resolution in mind.
+- Target **120fps** present while stroking: dirty layer upload + GPU stack blend; keep layer count and resolution in mind.
 - Viewport zoom/pan (**T2**): apply as vertex transform on the composited quad (or tile atlas); do not re-raster strokes for pan.
 
 ### SwiftUI
@@ -496,13 +497,14 @@ Smoothing is **input filtering** in the Data Layer (before samples land on the s
 3. User tweaks line width / smooth / etc. in inspector **before** drawing.
 4. `setTool(Eraser)` may auto-select last erase preset; brush tool restores last paint preset.
 
-### Dab model (v1)
+### Dab model (v1 — current code)
 
-- Round procedural tip if no `tipTextureId`; else stamp tip texture (import path).
-- Coverage = `smoothstep` by hardness from center (or tip alpha × hardness).
+- **Procedural round only** for stamp coverage (imported `Shape.png` tips are stored for UI / **T1-7-3b**, not stamped — raw tip coverage speckled strokes).
+- Coverage = hard core + smooth hardness falloff + ~1px AA fringe.
 - Effective width = `lineWidthPx * mix(1, pressure, sizePressure)`.
-- Spacing: step ≤ `spacing * effectiveWidth` along the segment.
-- Color: straight alpha or premultiplied; match `math/Blend.hpp` conventions.
+- Spacing: step ≤ ~`0.10–0.15 × diameter` (imported tip presets floored tighter; Procreate map caps spacing).
+- Flow/hardness: tip-bearing presets floored toward solid ink until tip+grain lands.
+- Color: straight-alpha layer pixels; paint uses `blendPaintOver` so same-color overlaps stay vivid.
 
 ---
 
@@ -510,7 +512,7 @@ Smoothing is **input filtering** in the Data Layer (before samples land on the s
 
 Goal: let users import brushes the way Procreate does — **`.brush`**, **`.brushset`**, and **`.brushlibrary`** — into `BrushLibrary` sets, with tip/grain assets and a **best-effort** parameter map into `BrushPreset`.
 
-**Status:** T1-7-1…T1-7-6 shipped (public API + DrawingEditor import UX). Open: grain multiply in dab path ([T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import)), Photoshop `.abr` ([T1-7-7](ROADMAP.md#t1-7--procreate-style-brush-import)).
+**Status:** T1-7-1…T1-7-6 shipped (public API + DrawingEditor import UX; tip/grain PNGs stored). Stamp path is **procedural round** until [T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import) (tip silhouette + grain). Open: Photoshop `.abr` ([T1-7-7](ROADMAP.md#t1-7--procreate-style-brush-import)).
 
 Procreate’s formats are **proprietary** (Savage Interactive). There is no official public schema. Community reverse-engineering (ZIP + PNG + `Brush.archive` bplist) is good enough for **import**, not for claiming 1:1 engine parity.
 
@@ -588,11 +590,11 @@ Document in UI: **“Imported — approximated”** when any required key is mis
 
 | Tip | Behavior |
 |-----|----------|
-| No tip texture | Procedural round dab (current path) |
-| Tip PNG | Stamp tip centered on dab, scaled to effective width, rotated by `angleDeg` |
+| No tip texture | Procedural round dab |
+| Tip PNG (`tipTextureId`) | **Stored only** for now — stamp uses procedural round (raw Shape.png as coverage = noise/dark cores). Re-enable as soft silhouette + AA in **T1-7-3b** |
 | Grain | Optional multiply — **not wired yet** ([T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import)); `grainTextureId` stored on import |
 
-Import without tip stamp support is still useful: map numeric params onto round brushes so line width / smooth / opacity feel close.
+Import without tip stamp is still useful: map numeric params onto round brushes (spacing/flow/hardness clamped so imported presets stay continuous and solid).
 
 ### Public API (import)
 
@@ -628,11 +630,11 @@ DrawingEditor: `presentBrushImport()` / `fileImporter` + approximated badge in B
 |-------|---------|--------|-------------|
 | Unpack + assets | **T1-7-1** | done | Unzip `.brush` / `.brushset`; register PNGs; create set |
 | Param map | **T1-7-2** | done | Decode `Brush.archive`; map size/opacity/spacing/smooth/hardness/pressure |
-| Tip stamp raster | **T1-7-3** | done | CPU + Metal tip texture stamp |
+| Tip assets | **T1-7-3** | done | Import/store tip PNG; stamp deferred (procedural round) |
 | Public + listing APIs | **T1-7-4** | done | `importBrushPackage*`, `brushSetSource`, approximated |
 | Library UX | **T1-7-5** | done | Swift Import UI, Imported set, approximate badge |
 | `.brushlibrary` | **T1-7-6** | done | Multi-set package |
-| Grain multiply | **T1-7-3b** | open | Dab path uses `grainTextureId` |
+| Tip silhouette + grain | **T1-7-3b** | open | Soft tip mask + `grainTextureId` multiply (not raw Shape.png coverage) |
 | Photoshop `.abr` | **T1-7-7** | open | Later if needed |
 
 ### Legal / product note
@@ -932,8 +934,8 @@ src/
     // StrokeEdit — planned with T2-6
     // FillOp — planned with T1-8
   render/
-    StrokeRasterizer.hpp/.cpp  // CPU; tip stamp
-    MetalStrokeRasterizer.*    // compute dab path
+    StrokeRasterizer.hpp/.cpp  // CPU procedural round → layer
+    MetalStrokeRasterizer.*    // compute dab (not hot path)
     LayerCompositor.*          // GPU blend
     FloodFill.hpp/.cpp         // scanline ColorDrop (T1-8)
   math/
@@ -951,7 +953,7 @@ Stroke input smoothing + rasterize live in `IllusStudioCanvasEditor` (no separat
 | Design slice | Roadmap |
 |--------------|---------|
 | Vector stroke + CPU raster + brush library + session props + eraser | **T1-1** |
-| Live overlay + dirty tiles | **T1-2** |
+| Dirty tiles + (retired) live overlay; paint stamps into layer | **T1-2** |
 | Metal compute rasterizer | **T1-3** |
 | GPU layer composite | **T1-4** |
 | Procreate `.brush` / `.brushset` import | **T1-7** |
@@ -1025,23 +1027,24 @@ Internal: never expose `std::vector<Stroke>` to Swift — use count + copy-into-
 
 One runnable check covering hybrid invariants:
 
-1. **Paint:** after stroke, active layer pixels darkened; other layers unchanged.
+1. **Paint:** during/after stroke, active layer pixels painted; other layers unchanged.
 2. **Erase:** paint then erase same path → pixels near transparent / background show-through on composite.
 3. **Session props:** `setBrushLineWidth` before stroke changes dab size; mid-stroke change does not alter in-flight `presetSnapshot`.
 4. **Line smooth:** `lineSmooth > 0` reduces high-frequency jitter vs raw samples (distance metric in self-check).
 5. **Vector integrity:** after `endStroke`, layer stroke count += 1; undo (when **T3** exists) restores prior hash of layer tiles.
 6. **Move / adjust:** stroke on layer A; `translateStroke` shifts polyline; layer B unchanged; wrong `layerId` cannot see A’s stroke.
-7. **Import (T1-7):** fixture `.brush` → set +1; tip id set when PNG present.
-8. **Device:** `metalAvailable` ⇒ present texture non-null; Swift uses engine device.
-9. **Fill (T1-8):** closed ring → interior filled; reference isolation; cancel preview leaves hash unchanged.
+7. **Import (T1-7):** fixture `.brush` → set +1; tip id set when PNG present; stamp stays bright green (procedural, not tip grain).
+8. **Overlap quality:** crossing soft lime strokes stay bright green at intersection (not dark/noisy).
+9. **Device:** `metalAvailable` ⇒ present texture non-null; Swift uses engine device.
+10. **Fill (T1-8):** closed ring → interior filled; reference isolation; cancel preview leaves hash unchanged.
 
-`CanvasEditor::selfCheck()` covers paint/erase/session/import/viewport/Bezier smoke paths (+ fill when T1-8 lands).
+`CanvasEditor::selfCheck()` covers paint/erase/session/import/viewport/Bezier/overlap smoke paths (+ fill when T1-8 lands).
 
 ---
 
 ## Migration note
 
-T1-1…T1-4 migrated the old “stamp straight into CPU layer RGBA” path into: append vector samples → rasterize into **layer** cache → GPU composite. Do **not** keep a parallel pixels-only stroke path — one pipeline, CPU or Metal backend behind `StrokeRasterizer` / `MetalStrokeRasterizer`.
+Pipeline: append vector samples → `StrokeRasterizer` into **layer** pixels → dirty GPU upload → `LayerCompositor` present. Live-overlay paint was tried (T1-2) and **retired** for quality; do not reintroduce soft paint as a separate overlay without a coverage-correct merge. Tip PNG stamp returns only via **T1-7-3b** (silhouette + grain), not raw Shape.png coverage.
 
 ---
 
@@ -1064,4 +1067,4 @@ T1-1…T1-4 migrated the old “stamp straight into CPU layer RGBA” path into:
 
 Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` / `.brushlibrary` import** unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone. **Color Fill (ColorDrop)** floods flats into closed regions with threshold + optional Reference layer for ink/color separation.
 
-**Shipped:** T1-1…T1-4, T1-7 (except grain / ABR), T2-7-1. **Next:** T1-8 Color Fill, T2-6 move/adjust, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).
+**Shipped:** T1-1…T1-4, T1-7 (except tip+grain stamp / ABR), T2-7-1; solid procedural paint into layer. **Next:** T1-8 Color Fill, T2-6 move/adjust, T1-7-3b tip+grain, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).

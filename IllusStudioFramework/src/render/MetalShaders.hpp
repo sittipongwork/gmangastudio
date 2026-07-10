@@ -57,12 +57,19 @@ kernel void stampDab(
     float4 dst = tex.read(upix);
     if (u.erase != 0) {
         float inv = 1.0f - sa;
-        dst.rgb *= inv;
         dst.a *= inv;
+        if (dst.a < 1e-4f) dst = float4(0.0f);
     } else {
+        // Straight-alpha src-over (matches math::blendSrcOver). Compositor premultiplies later.
+        float da = dst.a;
         float inv = 1.0f - sa;
-        dst.rgb = u.color.rgb * sa + dst.rgb * inv;
-        dst.a = sa + dst.a * inv;
+        float outA = sa + da * inv;
+        if (outA < 1e-5f) {
+            dst = float4(0.0f);
+        } else {
+            dst.rgb = (u.color.rgb * sa + dst.rgb * da * inv) / outA;
+            dst.a = outA;
+        }
     }
     tex.write(dst, upix);
 }

@@ -13,82 +13,52 @@
 namespace illus {
 namespace {
 
+/// Round dab coverage: hard core + smooth falloff + ~1px AA fringe.
 float coverageAt(float dist, float radius, float hardness) {
-    if (radius <= 0.f || dist >= radius) return 0.f;
-    const float t = dist / radius;
-    const float softStart = std::clamp(1.f - hardness, 0.05f, 1.f);
-    if (t <= softStart) return 1.f;
-    const float u = (t - softStart) / (1.f - softStart);
-    return 1.f - (u * u * (3.f - 2.f * u));
+    if (radius <= 0.f) return 0.f;
+    constexpr float kAA = 1.f;
+    if (dist >= radius + kAA) return 0.f;
+
+    const float soft = std::clamp(1.f - hardness, 0.f, 1.f);
+    // soft=0 → core almost to edge (ink); soft=1 → falloff from near center (airbrush).
+    const float coreR = radius * (1.f - soft * 0.92f);
+
+    float cov = 1.f;
+    if (dist > coreR) {
+        const float span = std::max(radius - coreR, 1e-4f);
+        const float u = std::clamp((dist - coreR) / span, 0.f, 1.f);
+        cov = 1.f - (u * u * (3.f - 2.f * u));
+    }
+    if (dist > radius) {
+        cov *= 1.f - (dist - radius) / kAA;
+    }
+    return std::clamp(cov, 0.f, 1.f);
 }
 
 uint8_t* pixelAt(uint8_t* pixels, int32_t width, int32_t x, int32_t y) {
     return pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
 }
 
-bool stampTipDab(
-    uint8_t* pixels,
-    int32_t width,
-    int32_t height,
-    float x,
-    float y,
-    float pressure,
-    const BrushPreset& preset,
-    const BrushTexture& tip,
-    math::Rect& dirty
-) {
-    const float radius = StrokeRasterizer::effectiveRadius(pressure, preset);
-    if (radius < 0.25f) return false;
+float stampSpacing(const BrushPreset& preset) {
+    // Continuous stroke: keep steps ≤ ~15% of diameter. Tip presets were often too sparse.
+    float spacing = std::clamp(preset.spacing, 0.04f, 0.15f);
+    if (preset.tipTextureId >= 0) spacing = std::min(spacing, 0.10f);
+    return spacing;
+}
 
+float stampHardness(const BrushPreset& preset) {
+    // Until T1-7-3b tip/grain: imported soft tips → muddy rings; floor toward ink.
+    if (preset.tipTextureId >= 0) return std::clamp(std::max(preset.hardness, 0.88f), 0.f, 1.f);
+    return std::clamp(preset.hardness, 0.f, 1.f);
+}
+
+float stampAlpha(float pressure, const BrushPreset& preset) {
     const float p = std::clamp(pressure, 0.f, 1.f);
     const float opacScale = 1.f - preset.opacityPressure + preset.opacityPressure * p;
-    const float alphaF = std::clamp(preset.opacity * preset.flow * opacScale, 0.f, 1.f);
-    if (alphaF <= 0.f) return false;
-
-    const float diameter = radius * 2.f;
-    const float angle = preset.angleDeg * (3.14159265f / 180.f);
-    const float ca = std::cos(angle);
-    const float sa = std::sin(angle);
-
-    const int minX = std::max(0, static_cast<int>(std::floor(x - radius - 1.f)));
-    const int maxX = std::min(width - 1, static_cast<int>(std::ceil(x + radius + 1.f)));
-    const int minY = std::max(0, static_cast<int>(std::floor(y - radius - 1.f)));
-    const int maxY = std::min(height - 1, static_cast<int>(std::ceil(y + radius + 1.f)));
-    if (minX > maxX || minY > maxY) return false;
-
-    const bool erase = preset.mode == BrushMode::Erase;
-    const float invDiam = 1.f / std::max(1.f, diameter);
-
-    for (int py = minY; py <= maxY; ++py) {
-        for (int px = minX; px <= maxX; ++px) {
-            const float dx = (px + 0.5f) - x;
-            const float dy = (py + 0.5f) - y;
-            // Rotate into tip space, map to [0,1] UV over diameter.
-            const float rx = dx * ca + dy * sa;
-            const float ry = -dx * sa + dy * ca;
-            const float u = rx * invDiam + 0.5f;
-            const float v = ry * invDiam + 0.5f;
-            if (u < 0.f || v < 0.f || u >= 1.f || v >= 1.f) continue;
-
-            const int tx = std::min(tip.width - 1, static_cast<int>(u * tip.width));
-            const int ty = std::min(tip.height - 1, static_cast<int>(v * tip.height));
-            const uint8_t* src = tip.rgba.data()
-                + (static_cast<size_t>(ty) * static_cast<size_t>(tip.width) + static_cast<size_t>(tx)) * 4u;
-            // Tip coverage from luminance or alpha (Shape.png often grayscale in alpha/RGB).
-            const float tipA = std::max({src[0], src[1], src[2], src[3]}) / 255.f;
-            if (tipA <= 0.001f) continue;
-            const uint8_t a = static_cast<uint8_t>(std::clamp(tipA * alphaF * 255.f, 0.f, 255.f));
-            uint8_t* dst = pixelAt(pixels, width, px, py);
-            if (erase) {
-                math::blendDestOut(dst, a);
-            } else {
-                math::blendSrcOver(dst, preset.color.r, preset.color.g, preset.color.b, a);
-            }
-        }
-    }
-    dirty.unionWith(minX, minY, maxX, maxY);
-    dirty.clipTo(width, height);
-    return true;
+    float flow = preset.flow;
+    // Tip-bearing Procreate maps often ship tiny flow → translucent speckled buildup.
+    if (preset.tipTextureId >= 0) flow = std::max(flow, 0.95f);
+    return std::clamp(preset.opacity * flow * opacScale, 0.f, 1.f);
 }
 
 void stampSegmentInto(
@@ -107,7 +77,8 @@ void stampSegmentInto(
     const float dy = b.y - a.y;
     const float dist = std::sqrt(dx * dx + dy * dy);
     const float midP = 0.5f * (a.pressure + b.pressure);
-    const float step = std::max(0.5f, preset.spacing * 2.f * StrokeRasterizer::effectiveRadius(midP, preset));
+    const float radius = StrokeRasterizer::effectiveRadius(midP, preset);
+    const float step = std::max(0.35f, stampSpacing(preset) * 2.f * radius);
 
     if (dist < 1e-4f) {
         if (carryDist <= 0.f) {
@@ -148,48 +119,43 @@ bool StrokeRasterizer::stampDab(
     float pressure,
     const BrushPreset& preset,
     math::Rect& dirty,
-    const BrushAssetStore* assets
+    const BrushAssetStore* /*assets*/
 ) {
     if (!pixels) return false;
 
-    if (assets && preset.tipTextureId >= 0) {
-        if (const BrushTexture* tip = assets->find(preset.tipTextureId)) {
-            if (tip->width > 0 && tip->height > 0 && !tip->rgba.empty()) {
-                return stampTipDab(pixels, width, height, x, y, pressure, preset, *tip, dirty);
-            }
-        }
-    }
+    // ponytail: skip Shape.png tip stamp — imported tips bake grain into coverage (speckles /
+    // dark cores). Procedural round only; tip+grain returns as T1-7-3b.
 
     const float radius = effectiveRadius(pressure, preset);
     if (radius < 0.25f) return false;
 
-    const float p = std::clamp(pressure, 0.f, 1.f);
-    const float opacScale = 1.f - preset.opacityPressure + preset.opacityPressure * p;
-    const float alphaF = std::clamp(preset.opacity * preset.flow * opacScale, 0.f, 1.f);
+    const float alphaF = stampAlpha(pressure, preset);
     if (alphaF <= 0.f) return false;
 
-    const float radius2 = radius * radius;
-    const int minX = std::max(0, static_cast<int>(std::floor(x - radius)));
-    const int maxX = std::min(width - 1, static_cast<int>(std::ceil(x + radius)));
-    const int minY = std::max(0, static_cast<int>(std::floor(y - radius)));
-    const int maxY = std::min(height - 1, static_cast<int>(std::ceil(y + radius)));
+    const float hard = stampHardness(preset);
+    constexpr float kAA = 1.f;
+    const int minX = std::max(0, static_cast<int>(std::floor(x - radius - kAA)));
+    const int maxX = std::min(width - 1, static_cast<int>(std::ceil(x + radius + kAA)));
+    const int minY = std::max(0, static_cast<int>(std::floor(y - radius - kAA)));
+    const int maxY = std::min(height - 1, static_cast<int>(std::ceil(y + radius + kAA)));
     if (minX > maxX || minY > maxY) return false;
 
     const bool erase = preset.mode == BrushMode::Erase;
+    const float outer2 = (radius + kAA) * (radius + kAA);
     for (int py = minY; py <= maxY; ++py) {
         for (int px = minX; px <= maxX; ++px) {
             const float dx = (px + 0.5f) - x;
             const float dy = (py + 0.5f) - y;
             const float d2 = dx * dx + dy * dy;
-            if (d2 > radius2) continue;
-            const float cov = coverageAt(std::sqrt(d2), radius, preset.hardness);
-            if (cov <= 0.f) continue;
-            const uint8_t a = static_cast<uint8_t>(std::clamp(cov * alphaF * 255.f, 0.f, 255.f));
+            if (d2 > outer2) continue;
+            const float cov = coverageAt(std::sqrt(d2), radius, hard);
+            if (cov <= 0.004f) continue;
+            const uint8_t a = static_cast<uint8_t>(std::clamp(cov * alphaF * 255.f + 0.5f, 0.f, 255.f));
             uint8_t* dst = pixelAt(pixels, width, px, py);
             if (erase) {
                 math::blendDestOut(dst, a);
             } else {
-                math::blendSrcOver(dst, preset.color.r, preset.color.g, preset.color.b, a);
+                math::blendPaintOver(dst, preset.color.r, preset.color.g, preset.color.b, a);
             }
         }
     }

@@ -183,6 +183,15 @@ BrushPreset BrushLibrary::resolvedPreset() const {
     out.spacing = clampf(out.spacing, 0.01f, 2.f);
     out.sizePressure = clampf(out.sizePressure, 0.f, 1.f);
     out.opacityPressure = clampf(out.opacityPressure, 0.f, 1.f);
+    // ponytail: until T1-7-3b tip/grain, imported tip presets stamp as solid round —
+    // Procreate spacing/flow/softness otherwise produce scalloped muddy dabs.
+    if (out.tipTextureId >= 0) {
+        out.spacing = std::min(out.spacing, 0.10f);
+        out.flow = std::max(out.flow, 0.95f);
+        out.hardness = std::max(out.hardness, 0.88f);
+    } else {
+        out.spacing = std::min(out.spacing, 0.15f);
+    }
     return out;
 }
 

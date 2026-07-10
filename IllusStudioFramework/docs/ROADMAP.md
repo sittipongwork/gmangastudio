@@ -13,7 +13,7 @@ Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Spe
 | Id | Epic | Status |
 |----|------|--------|
 | [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done (blend modes open) |
-| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import, Color Fill) | T1-1…T1-4 + T1-7 done (T1-3-3 / T1-7-3b / T1-7-7 / **T1-8** open) |
+| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import, Color Fill) | T1-1…T1-4 + T1-7 done; paint→layer (overlay retired); T1-3-3 / T1-7-3b / T1-7-7 / **T1-8** open |
 | [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) + move/adjust + hybrid follow-ups | T2-1…T2-5 + T2-7-1 done (T2-6 / T2-7-2/3 open) |
 | [T3](#t3--history-undo--redo--timelapse) | History (undo / redo / timelapse) | open |
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
@@ -76,8 +76,8 @@ Former **P1** (tools) + [brush_drawing.md](brush_drawing.md). Vector source of t
 
 ### T1-2 — Live overlay + dirty tiles (P1b)
 
-- [x] **T1-2-1** Live stroke overlay buffer/texture (layer + overlay while stroking)
-- [x] **T1-2-2** Merge overlay → layer on `endStroke`
+- [x] **T1-2-1** Live stroke overlay buffer/texture (layer + overlay while stroking) — **retired for paint:** soft paint-over-paint via layer+overlay went dark/noisy at overlaps; paint+erase now stamp **into the active layer** and dirty-upload GPU (overlay code kept for possible future use)
+- [x] **T1-2-2** Merge overlay → layer on `endStroke` — N/A while paint stamps into layer; merge helper still uses `blendPaintOver` if overlay path returns
 - [x] **T1-2-3** Tile dirty tracking for upload / compute
 
 ### T1-3 — Metal compute rasterizer (P1c)
@@ -98,8 +98,8 @@ Import `.brush` / `.brushset` (later `.brushlibrary`) into `BrushLibrary`. Desig
 
 - [x] **T1-7-1** Unzip package; discover brush folders; store tip/grain/preview PNGs in `BrushAssetStore`; create `BrushSet`
 - [x] **T1-7-2** Decode `Brush.archive` (bplist / NSKeyedArchiver shim); map → `lineWidth`, `lineSmooth`, hardness, opacity, spacing, pressure gains
-- [x] **T1-7-3** `StrokeRasterizer` / `MetalStrokeRasterizer` tip-texture stamp (CPU + Metal)
-- [ ] **T1-7-3b** Grain multiply in dab path (`grainTextureId` stored; not wired in rasterizers yet)
+- [x] **T1-7-3** Tip assets import + store (`tipTextureId`); **stamp path currently procedural round only** — raw `Shape.png` as coverage baked grain/noise (re-enable silhouette+AA with **T1-7-3b**)
+- [ ] **T1-7-3b** Tip silhouette + grain multiply in dab path (`tipTextureId` / `grainTextureId` stored; not wired in rasterizers yet)
 - [x] **T1-7-4** Public `importBrushPackage` / `importBrushPackageBytes` + set listing APIs (`brushSetSource`, `brushPresetApproximated`)
 - [x] **T1-7-5** Swift DrawingEditor: Import UI, Imported set, “approximated” badge
 - [x] **T1-7-6** `.brushlibrary` as multi-set; fixture self-check in repo test resources
@@ -269,14 +269,15 @@ Policy & samples: [cpp-math-libs skill](../../.cursor/skills/cpp-math-libs/SKILL
 
 ## Suggested order
 
-**Done:** T0 (except T0-12) · T6 · T1-1…T1-4 · T1-7 (except grain T1-7-3b / ABR T1-7-7) · T2-1…T2-5 · T2-7-1 · TX-7
+**Done:** T0 (except T0-12) · T6 · T1-1…T1-4 · T1-7 (except tip+grain stamp T1-7-3b / ABR T1-7-7) · T2-1…T2-5 · T2-7-1 · TX-7  
+**Paint quality (current):** CPU procedural round dabs → layer (`blendPaintOver` same-color coverage); spacing/flow/hardness floored for imported tip presets; straight-alpha present.
 
 ```text
 Next:
   T0-12 (layer blend modes; Normal already; can parallel T2-6 / T1-8)
   → T1-8 (Color Fill / ColorDrop; Reference layer)
   → T2-6 (move/adjust + gizmo)
-  → T1-7-3b (grain multiply) when needed
+  → T1-7-3b (tip silhouette + grain; not raw Shape.png coverage)
   → T2-7-2 / T2-7-3 (tilt; stroke→tile index)
   → T3 (history; stroke list + FillCommand ready)
   → T4 → T5

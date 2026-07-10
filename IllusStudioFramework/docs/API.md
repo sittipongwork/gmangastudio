@@ -113,10 +113,12 @@ Points are **canvas pixels**, not view space. Map with viewport helpers first.
 
 | API | Returns | Notes |
 |-----|---------|-------|
-| `beginStroke(x, y, pressure)` | `void` | No-op in `Pointer` tool |
-| `continueStroke(x, y, pressure)` | `void` | |
-| `endStroke()` | `void` | Commits vector stroke + raster |
+| `beginStroke(x, y, pressure)` | `void` | No-op in `Pointer` tool; stamps into active layer |
+| `continueStroke(x, y, pressure)` | `void` | Incremental dab segment into layer |
+| `endStroke()` | `void` | Commits vector stroke (raster already on layer) |
 | `strokeCountOnLayer(layerId)` | `int32_t` | Query only; hit-test / edit APIs planned (T2-6) |
+
+Paint/erase use CPU `StrokeRasterizer` → dirty GPU layer upload. Same-color overlaps use coverage accumulate (`blendPaintOver`). Spec: [brush_drawing.md](brush_drawing.md) § Live stroke / Dab model.
 
 ---
 

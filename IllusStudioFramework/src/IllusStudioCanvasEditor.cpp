@@ -260,49 +260,29 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
     liveStroke_.presetSnapshot = brushes_.resolvedPreset();
     liveStroke_.bounds.reset();
 
-    // Paint → live overlay (T1-2); erase still hits the layer (dest-out needs backdrop).
-    strokeUsesOverlay_ = liveStroke_.presetSnapshot.mode != BrushMode::Erase;
-    if (strokeUsesOverlay_) {
-        const size_t n = static_cast<size_t>(page_.width) * static_cast<size_t>(page_.height) * 4u;
-        liveOverlay_.assign(n, 0);
-        if (gpuCompositeReady_) gpu_.clearOverlay();
-    } else {
-        liveOverlay_.clear();
-    }
+    // ponytail: stamp paint+erase into the layer (not a live overlay). Soft paint over
+    // paint via layer+overlay premult composite went dark/noisy at overlaps.
+    strokeUsesOverlay_ = false;
+    liveOverlay_.clear();
+    if (gpuCompositeReady_) gpu_.clearOverlay();
 
     const StrokeSample s = smoothSample(x, y, pressure, liveStroke_.presetSnapshot);
     liveStroke_.samples.push_back(s);
 
     math::Rect localDirty{};
-    if (strokeUsesOverlay_) {
-        stampDabGpuOrCpu(
-            liveOverlay_.data(),
-            gpuCompositeReady_ ? gpu_.overlayTexture() : nullptr,
-            s.x,
-            s.y,
-            s.pressure,
-            liveStroke_.presetSnapshot,
-            localDirty
-        );
-        if (gpuCompositeReady_ && !localDirty.empty()) {
-            gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, localDirty);
-        }
-    } else {
-        layer->ensurePixels(page_.width, page_.height);
-        // Erase: CPU into layer; sync GPU texture so present stays current.
-        StrokeRasterizer::stampDab(
-            *layer,
-            page_.width,
-            page_.height,
-            s.x,
-            s.y,
-            s.pressure,
-            liveStroke_.presetSnapshot,
-            localDirty,
-            &brushes_.assets()
-        );
-        if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
-    }
+    layer->ensurePixels(page_.width, page_.height);
+    StrokeRasterizer::stampDab(
+        *layer,
+        page_.width,
+        page_.height,
+        s.x,
+        s.y,
+        s.pressure,
+        liveStroke_.presetSnapshot,
+        localDirty,
+        &brushes_.assets()
+    );
+    if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     liveStroke_.bounds.expand(s.x, s.y, StrokeRasterizer::effectiveRadius(s.pressure, liveStroke_.presetSnapshot) + 1.f);
     noteDirty(localDirty);
 }
@@ -318,37 +298,20 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
     const StrokeSample next = smoothSample(x, y, pressure, liveStroke_.presetSnapshot);
     const StrokeSample& prev = liveStroke_.samples.back();
     math::Rect localDirty{};
-    if (strokeUsesOverlay_ && !liveOverlay_.empty()) {
-        StrokeRasterizer::stampSegment(
-            liveOverlay_.data(),
-            page_.width,
-            page_.height,
-            prev,
-            next,
-            liveStroke_.presetSnapshot,
-            dabCarry_,
-            localDirty,
-            &liveStroke_.bounds,
-            &brushes_.assets()
-        );
-        if (gpuCompositeReady_ && !localDirty.empty()) {
-            gpu_.uploadOverlay(liveOverlay_.data(), page_.width, page_.height, localDirty);
-        }
-    } else {
-        StrokeRasterizer::stampSegment(
-            *layer,
-            page_.width,
-            page_.height,
-            prev,
-            next,
-            liveStroke_.presetSnapshot,
-            dabCarry_,
-            localDirty,
-            &liveStroke_.bounds,
-            &brushes_.assets()
-        );
-        if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
-    }
+    layer->ensurePixels(page_.width, page_.height);
+    StrokeRasterizer::stampSegment(
+        *layer,
+        page_.width,
+        page_.height,
+        prev,
+        next,
+        liveStroke_.presetSnapshot,
+        dabCarry_,
+        localDirty,
+        &liveStroke_.bounds,
+        &brushes_.assets()
+    );
+    if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     liveStroke_.samples.push_back(next);
     noteDirty(localDirty);
 }
@@ -397,7 +360,7 @@ void IllusStudioCanvasEditor::mergeLiveOverlayIntoLayer() {
     if (r.empty()) {
         r = {0, 0, page_.width, page_.height};
     }
-    math::blendLayerRect(layer->pixels.data(), liveOverlay_.data(), page_.width, r, 1.f);
+    math::blendPaintLayerRect(layer->pixels.data(), liveOverlay_.data(), page_.width, r, 1.f);
     // Layer changed — below-cache still valid; re-composite active+above for dirty.
     noteDirty(r);
 }
@@ -629,20 +592,18 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (editor.metalAvailable() && editor.presentMetalTexture() == nullptr) return false;
     }
 
-    // T1-2: live overlay merges into layer on endStroke (pixels change only after end).
+    // Paint stamps into the active layer during the stroke (overlay path retired —
+    // soft paint-over-paint via layer+overlay went dark at overlaps).
     {
         IllusStudioCanvasEditor editor(32, 32);
         Layer* layer = editor.layers().active();
         if (!layer) return false;
         editor.beginStroke(16, 16, 1);
-        // During stroke, layer pixels stay clean for paint-overlay path.
-        if (layer->hasPixels()) {
-            const uint8_t* px = layer->pixelAt(16, 16, 32);
-            if (px[3] > 8) return false;
-        }
-        editor.endStroke();
         if (!layer->hasPixels()) return false;
         if (layer->pixelAt(16, 16, 32)[3] < 10) return false;
+        editor.endStroke();
+        if (layer->pixelAt(16, 16, 32)[3] < 10) return false;
+        if (editor.strokeCountOnLayer(layer->id) != 1) return false;
     }
 
     // T1-3 / T1-4: GPU present path returns a texture when Metal is available.
@@ -890,7 +851,51 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[3])) return false;
     }
 
-    // T1-7: fixture .brush import → set + tip texture + tip stamp paints.
+    // Stamp quality: lime stroke must stay bright green (no dark dab cores on overlap).
+    {
+        IllusStudioCanvasEditor editor(64, 64);
+        editor.brushes().session().color = math::RGBA{50, 220, 40, 255};
+        editor.brushes().session().lineWidthPx = 28.f;
+        editor.brushes().session().opacity = 1.f;
+        editor.brushes().session().flow = 1.f;
+        editor.brushes().session().hardness = 0.9f;
+        editor.brushes().session().spacing = 0.25f; // resolved clamps; still continuous
+        editor.beginStroke(12, 32, 1);
+        editor.continueStroke(32, 32, 1);
+        editor.continueStroke(52, 32, 1);
+        editor.endStroke();
+        Layer* layer = editor.layers().active();
+        if (!layer || !layer->hasPixels()) return false;
+        const uint8_t* c = layer->pixelAt(32, 32, 64);
+        // Center of overlapping dabs: solid-ish lime, not muddy/dark.
+        if (c[1] < 180 || c[0] > 120 || c[2] > 120 || c[3] < 200) return false;
+        const uint8_t* edge = layer->pixelAt(32, 18, 64);
+        // Soft AA fringe may be partial alpha but RGB must stay lime-ish when present.
+        if (edge[3] > 20 && (edge[1] < edge[0] || edge[1] < 100)) return false;
+    }
+
+    // Cross-stroke overlap: second soft stroke over first must stay lime (not dark/noisy).
+    {
+        IllusStudioCanvasEditor editor(64, 64);
+        editor.brushes().session().color = math::RGBA{50, 220, 40, 255};
+        editor.brushes().session().lineWidthPx = 24.f;
+        editor.brushes().session().opacity = 1.f;
+        editor.brushes().session().flow = 0.55f;
+        editor.brushes().session().hardness = 0.25f;
+        editor.brushes().session().spacing = 0.12f;
+        editor.beginStroke(10, 32, 1);
+        editor.continueStroke(54, 32, 1);
+        editor.endStroke();
+        editor.beginStroke(32, 10, 1);
+        editor.continueStroke(32, 54, 1);
+        editor.endStroke();
+        Layer* layer = editor.layers().active();
+        if (!layer || !layer->hasPixels()) return false;
+        const uint8_t* cross = layer->pixelAt(32, 32, 64);
+        if (cross[1] < 180 || cross[0] > 120 || cross[2] > 120 || cross[3] < 80) return false;
+    }
+
+    // T1-7: fixture .brush import → set + tip texture stored; stamp is procedural round for now.
     {
         IllusStudioCanvasEditor editor(48, 48);
         const int32_t setsBefore = editor.brushes().setCount();
@@ -913,11 +918,15 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (!editor.brushes().assets().find(p->tipTextureId)) return false;
         if (std::abs(p->lineWidthPx - 24.f) > 0.5f) return false;
         if (!editor.brushes().setActivePreset(presetId)) return false;
+        editor.brushes().session().color = math::RGBA{50, 220, 40, 255};
         editor.beginStroke(24, 24, 1);
         editor.endStroke();
         Layer* layer = editor.layers().active();
         if (!layer || !layer->hasPixels()) return false;
-        if (layer->pixelAt(24, 24, 48)[3] < 10) return false;
+        const uint8_t* px = layer->pixelAt(24, 24, 48);
+        if (px[3] < 10) return false;
+        // Procedural round (not tip grain): center must be bright green, not dark/noisy.
+        if (px[1] < 150 || px[0] > 140) return false;
     }
 
     return true;

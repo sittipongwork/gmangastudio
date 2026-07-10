@@ -16,7 +16,7 @@ struct BrushColorPickerView: View {
     @State private var previousColor: Color = .black
     @State private var hue: Double = 0
     @State private var saturation: Double = 0
-    @State private var value: Double = 0.08
+    @State private var value: Double = 1
     @State private var alpha: Double = 1
     @State private var isEditing = false
     @State private var colorModel: ColorModel = .hsl
@@ -123,7 +123,9 @@ struct BrushColorPickerView: View {
         .frame(width: 280)
         .onAppear {
             previousColor = color
-            applyExternalColor(color)
+            // Brightness bar starts at 100% so the disc shows full chroma (not near-black).
+            applyExternalColor(color, forceValue: 1)
+            pushLive()
         }
         .onChange(of: color) { _, newValue in
             guard !isEditing else { return }
@@ -217,13 +219,15 @@ struct BrushColorPickerView: View {
         syncFieldsFromColor()
     }
 
-    private func applyExternalColor(_ c: Color) {
+    private func applyExternalColor(_ c: Color, forceValue: Double? = nil) {
         let hsv = ColorHSV.components(from: c)
         hue = hsv.h
         saturation = hsv.s
-        value = hsv.v
+        value = forceValue ?? hsv.v
         alpha = hsv.a
-        color = c
+        color = forceValue != nil
+            ? ColorHSV.color(h: hue, s: saturation, v: value, a: alpha)
+            : c
         syncFieldsFromColor()
     }
 

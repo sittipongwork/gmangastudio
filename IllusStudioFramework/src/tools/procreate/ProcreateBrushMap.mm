@@ -176,7 +176,8 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
     if (hit) {
         // Often percent of size (1..100) or 0..1.
         if (spacing > 1.f) spacing = spacing / 100.f;
-        preset.spacing = std::clamp(spacing, 0.01f, 2.f);
+        // Cap: large Procreate spacing → scalloped dab islands in our stamp path.
+        preset.spacing = std::clamp(spacing, 0.04f, 0.12f);
         ++hits;
     }
 

@@ -13,8 +13,8 @@ Build **IllusStudioCanvasEditor** (Procreate-style drawing editor) core:
 
 - Page settings, layers, brushes/eraser, Procreate `.brush` / `.brushset` / `.brushlibrary` import
 - Zoom/pan, Metal present (adaptive 72/120Hz + idle 5Hz in UI)
-- Planned: undo/redo, timelapse, animation + timeline, image import, export PNG / SVG / TIFF
-- Hybrid vector + raster drawing; Metal (metal-cpp) for present / GPU paths
+- Hybrid vector + raster: paint stamps into layer (procedural round); GPU composite
+- Planned: tip silhouette + grain (T1-7-3b), undo/redo, timelapse, animation + timeline, image import, export PNG / SVG / TIFF
 
 Swift UI uses the public C++ API via Swift–C++ interop (`SWIFT_OBJC_INTEROP_MODE = objcxx`). No C bridge.
 
