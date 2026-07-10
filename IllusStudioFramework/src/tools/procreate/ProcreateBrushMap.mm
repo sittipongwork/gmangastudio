@@ -77,6 +77,11 @@
         @"roundness", @"aspect", @"ellipticity", @"shapeRoundness",
         @"oriented", @"shapeOrientation",
         @"shapeInverted", @"textureScale", @"grainScale", @"grainDepth", @"grainDepthMinimum",
+        @"textureDepth", @"grainMovement", @"moving", @"texturized",
+        @"scatter", @"shapeScatter", @"count", @"shapeCount", @"rotationJitter", @"shapeRotationJitter",
+        @"taperEnd", @"taperEndSize", @"pencilTaperEnd",
+        @"dynamicsSpeedSize", @"dynamicsSpeedOpacity", @"dynamicsSpeedSpacing",
+        @"dynamicsTiltSize", @"dynamicsTiltOpacity", @"tiltSize", @"tiltOpacity",
         nil
     };
     for (NSInteger i = 0; kStringKeys[i]; ++i) {
@@ -277,10 +282,11 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
         else hit = false;
     }
     if (hit) {
-        if (size > 200.f) size = 40.f + std::fmod(size, 160.f);
-        // Procreate maxSize is often normalized (~0.2–3), not px — scale those up.
+        // Calibrated: Procreate maxSize is typically ~0.01–4 (normalized brush units).
+        // Map to canvas px: unit * 48 (1.0 → 48px), clamp. Values already in px (≥8) kept.
         float px = size;
-        if (px > 0.f && px < 8.f) px *= 40.f; // 0.2→8, 1→40, 2.1→84
+        if (px > 200.f) px = 40.f + std::fmod(px, 160.f);
+        else if (px > 0.f && px < 8.f) px *= 48.f; // was ×40; 48 closer to Drawing Pad
         preset.lineWidthPx = std::clamp(px, 1.f, 256.f);
         ++hits;
     }
@@ -292,13 +298,16 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
         ++hits;
     }
 
-    // Pressure size curve endpoints → minSize + enable sizePressure.
+    // Pressure size curve endpoints → minSize + enable sizePressure + curve fields.
     hit = false;
     float curveY0 = findNum(flat, {"sizecurvey0"}, hit);
     bool hitY1 = false;
     float curveY1 = findNum(flat, {"sizecurvey1"}, hitY1);
     if (hit && hitY1) {
         preset.minSize = std::clamp(curveY0, 0.f, 1.f);
+        preset.sizeCurveY0 = std::clamp(curveY0, 0.f, 1.f);
+        preset.sizeCurveY1 = std::clamp(curveY1, 0.f, 1.f);
+        preset.sizeCurveValid = true;
         const float span = std::abs(curveY1 - curveY0);
         preset.sizePressure = span > 0.05f ? 1.f : 0.f;
         ++hits;
@@ -351,10 +360,10 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
     hit = false;
     float spacing = findNum(flat, {"plotspacing", "spacing", "stampSpacing"}, hit);
     if (hit) {
-        // 0.009 = already a fraction of diameter; 0.7–2 ≈ percent-ish; >2 = percent.
+        // Procreate plotSpacing is usually a small fraction of diameter (0.02–0.25).
         if (spacing > 2.f) spacing = spacing / 100.f;
-        else if (spacing > 0.25f) spacing = spacing * 0.1f;
-        preset.spacing = std::clamp(spacing, 0.02f, 0.20f);
+        else if (spacing > 0.35f) spacing = spacing * 0.15f; // percent-ish mid range
+        preset.spacing = std::clamp(spacing, 0.02f, 0.35f);
         ++hits;
     }
 
@@ -369,6 +378,9 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
     bool hitOpY1 = false;
     float opacCurveY1 = findNum(flat, {"opacitycurvey1"}, hitOpY1);
     if (hit && hitOpY1) {
+        preset.opacityCurveY0 = std::clamp(opacCurveY0, 0.f, 1.f);
+        preset.opacityCurveY1 = std::clamp(opacCurveY1, 0.f, 1.f);
+        preset.opacityCurveValid = true;
         const float span = std::abs(opacCurveY1 - opacCurveY0);
         if (span > 0.05f) preset.opacityPressure = std::max(preset.opacityPressure, span);
         ++hits;
@@ -384,6 +396,13 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
     hit = false;
     float pencilTaper = findNum(flat, {"penciltapersize"}, hit);
     if (hit) preset.taperSize = std::max(preset.taperSize, norm01(pencilTaper));
+
+    hit = false;
+    float taperEnd = findNum(flat, {"taperend", "taperendsize", "penciltaperend"}, hit);
+    if (hit) {
+        preset.taperEndSize = norm01(taperEnd);
+        ++hits;
+    }
 
     hit = false;
     float taperOp = findNum(flat, {"taperopacity", "penciltaperopacity"}, hit);
@@ -428,18 +447,94 @@ void mapProcreateToPreset(const ProcreateArchiveFlat& flat, BrushPreset& preset,
     }
 
     hit = false;
+    float scatter = findNum(flat, {"scatter", "shapescatter"}, hit);
+    if (hit) {
+        preset.scatter = norm01(scatter);
+        ++hits;
+    }
+
+    hit = false;
+    float count = findNum(flat, {"count", "shapecount"}, hit);
+    if (hit && count >= 1.f) {
+        preset.stampCount = std::clamp(static_cast<int32_t>(std::lround(count)), 1, 4);
+        ++hits;
+    }
+
+    hit = false;
+    float rotJit = findNum(flat, {"rotationjitter", "shaperotationjitter"}, hit);
+    if (hit) {
+        preset.rotationJitter = norm01(rotJit);
+        ++hits;
+    }
+
+    hit = false;
     float gscale = findNum(flat, {"texturescale", "grainscale"}, hit);
     if (hit && gscale > 0.f) {
-        preset.grainScale = std::clamp(gscale, 0.05f, 16.f);
+        // textureScale often 0.01–2; keep as tiling multiplier.
+        if (gscale > 16.f) gscale = 16.f;
+        if (gscale < 0.05f) gscale = 0.05f;
+        preset.grainScale = gscale;
         ++hits;
     }
 
     hit = false;
     float gdepth = findNum(flat, {"graindepth", "texturedepth"}, hit);
     // decodeDouble often yields 0 for missing/object-typed grainDepth; 0 would disable grain.
-    // Keep preset default (1) unless we got a real positive depth.
     if (hit && gdepth > 1e-4f) {
         preset.grainDepth = norm01(gdepth);
+        ++hits;
+    }
+    hit = false;
+    float gdepthMin = findNum(flat, {"graindepthminimum"}, hit);
+    if (hit && gdepthMin > 1e-4f) {
+        preset.grainDepth = std::max(preset.grainDepth, norm01(gdepthMin));
+        ++hits;
+    }
+
+    // Grain movement: Moving (>0.5) vs Texturized (canvas-locked).
+    hit = false;
+    float gmove = findNum(flat, {"grainmovement", "moving"}, hit);
+    if (hit) {
+        preset.grainMoving = gmove > 0.5f;
+        ++hits;
+    } else {
+        hit = false;
+        float tex = findNum(flat, {"texturized"}, hit);
+        if (hit) {
+            preset.grainMoving = !(tex > 0.5f);
+            ++hits;
+        }
+    }
+
+    hit = false;
+    float spdSize = findNum(flat, {"dynamicsspeedsize"}, hit);
+    if (hit) {
+        preset.speedSize = norm01(spdSize);
+        ++hits;
+    }
+    hit = false;
+    float spdOp = findNum(flat, {"dynamicsspeedopacity"}, hit);
+    if (hit) {
+        preset.speedOpacity = norm01(spdOp);
+        ++hits;
+    }
+    hit = false;
+    float spdSp = findNum(flat, {"dynamicsspeedspacing"}, hit);
+    if (hit) {
+        preset.speedSpacing = norm01(spdSp);
+        ++hits;
+    }
+
+    hit = false;
+    float tiltSz = findNum(flat, {"dynamicstiltsize", "tiltsize"}, hit);
+    if (hit) {
+        preset.tiltSize = norm01(tiltSz);
+        ++hits;
+    }
+    hit = false;
+    float tiltOp = findNum(flat, {"dynamicstiltopacity", "tiltopacity"}, hit);
+    if (hit) {
+        preset.tiltOpacity = norm01(tiltOp);
         ++hits;
     }
 

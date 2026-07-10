@@ -231,7 +231,10 @@ bool IllusStudioCanvasEditor::mergeLayerDown(int32_t srcId, int32_t dstId) {
 }
 
 StrokeSample IllusStudioCanvasEditor::smoothSample(float x, float y, float pressure, const BrushPreset& preset) {
-    StrokeSample raw{x, y, pressure, 0, 0, 0};
+    using clock = std::chrono::steady_clock;
+    StrokeSample raw{x, y, pressure, strokeTiltX_, strokeTiltY_, 0};
+    // Monotonic time for speed dynamics (seconds since process epoch is fine).
+    raw.t = std::chrono::duration<float>(clock::now().time_since_epoch()).count();
     if (preset.lineSmooth <= 0.f || !haveSmoothed_) {
         haveSmoothed_ = true;
         smoothed_ = raw;
@@ -242,6 +245,9 @@ StrokeSample IllusStudioCanvasEditor::smoothSample(float x, float y, float press
     smoothed_.x = smoothed_.x + (raw.x - smoothed_.x) * alpha;
     smoothed_.y = smoothed_.y + (raw.y - smoothed_.y) * alpha;
     smoothed_.pressure = raw.pressure; // keep raw pressure (documented)
+    smoothed_.t = raw.t;
+    smoothed_.tiltX = raw.tiltX;
+    smoothed_.tiltY = raw.tiltY;
     return smoothed_;
 }
 
@@ -285,7 +291,8 @@ void IllusStudioCanvasEditor::beginStroke(float x, float y, float pressure) {
         s.pressure,
         dab,
         localDirty,
-        &brushes_.assets()
+        &brushes_.assets(),
+        strokeDistPx_
     );
     if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     liveStroke_.bounds.expand(s.x, s.y, StrokeRasterizer::effectiveRadius(s.pressure, dab) + 1.f);
@@ -320,6 +327,11 @@ void IllusStudioCanvasEditor::continueStroke(float x, float y, float pressure) {
     if (gpuCompositeReady_) syncGpuLayer(layer->id, localDirty);
     liveStroke_.samples.push_back(next);
     noteDirty(localDirty);
+}
+
+void IllusStudioCanvasEditor::setStrokeTilt(float tiltX, float tiltY) {
+    strokeTiltX_ = tiltX;
+    strokeTiltY_ = tiltY;
 }
 
 void IllusStudioCanvasEditor::endStroke() {
@@ -968,9 +980,11 @@ bool IllusStudioCanvasEditor::selfCheck() {
         }
         BrushPreset p;
         p.lineWidthPx = 20.f;
-        p.flow = 0.3f;
+        p.flow = 0.25f;
+        p.spacing = 0.12f;
         p.grainDepth = 1.f;
         p.grainScale = 1.f;
+        p.grainMoving = false;
         p.color = math::RGBA{0, 0, 0, 255};
         p.tipTextureId = editor.brushes().assets().addRGBA(16, 16, tip.data(), static_cast<int32_t>(tip.size()));
         p.grainTextureId =
@@ -997,6 +1011,49 @@ bool IllusStudioCanvasEditor::selfCheck() {
         if (hole < 4 || solid < 4) return fail("grain-stripe-pattern");
     }
 
+    // Moving grain UV advances with strokeDist — differs from Texturized canvas lock.
+    {
+        std::vector<uint8_t> tip(16 * 16 * 4, 255);
+        std::vector<uint8_t> grain(16 * 16 * 4, 255);
+        for (int y = 0; y < 16; ++y) {
+            for (int x = 0; x < 16; ++x) {
+                uint8_t* g = grain.data() + (static_cast<size_t>(y) * 16u + static_cast<size_t>(x)) * 4u;
+                const uint8_t v = ((x / 4) % 2 == 0) ? 255 : 0;
+                g[0] = g[1] = g[2] = v;
+                g[3] = 255;
+            }
+        }
+        auto run = [&](bool moving) {
+            IllusStudioCanvasEditor ed(64, 32);
+            BrushPreset p;
+            p.lineWidthPx = 18.f;
+            p.flow = 0.28f;
+            p.grainDepth = 1.f;
+            p.grainScale = 1.f;
+            p.grainMoving = moving;
+            p.spacing = 0.12f;
+            p.color = math::RGBA{0, 0, 0, 255};
+            p.tipTextureId = ed.brushes().assets().addRGBA(16, 16, tip.data(), static_cast<int32_t>(tip.size()));
+            p.grainTextureId =
+                ed.brushes().assets().addRGBA(16, 16, grain.data(), static_cast<int32_t>(grain.size()));
+            std::vector<BrushPreset> one{p};
+            const int32_t setId =
+                ed.brushes().addImportedSet(moving ? "g-move" : "g-tex", BrushSource::ImportedProcreate, one);
+            const int32_t setIndex = ed.brushes().indexOfSetId(setId);
+            ed.brushes().setActivePreset(ed.brushes().presetIdInSet(setIndex, 0));
+            ed.beginStroke(8, 16, 1);
+            ed.continueStroke(56, 16, 1);
+            ed.endStroke();
+            Layer* layer = ed.layers().active();
+            uint32_t h = 0;
+            for (int x = 16; x < 48; ++x) {
+                h = h * 131u + layer->pixelAt(x, 16, 64)[3];
+            }
+            return h;
+        };
+        if (run(false) == run(true)) return fail("grain-moving-differs");
+    }
+
     // Procreate-like params: stroke taper shrinks start of stroke.
     {
         BrushPreset p;
@@ -1011,6 +1068,15 @@ bool IllusStudioCanvasEditor::selfCheck() {
             1.f, StrokeRasterizer::withStrokeDynamics(p, 1.f, 400.f)
         );
         if (!(r0 < r1 * 0.6f)) return fail("taper-start-thin");
+        p.taperSize = 0.f;
+        p.taperEndSize = 1.f;
+        const float rEnd = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p, 1.f, 400.f, 400.f)
+        );
+        const float rMid = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p, 1.f, 200.f, 400.f)
+        );
+        if (!(rEnd < rMid * 0.75f)) return fail("taper-end-thin");
         BrushPreset p2;
         p2.lineWidthPx = 40.f;
         p2.minSize = 0.25f;
@@ -1018,6 +1084,26 @@ bool IllusStudioCanvasEditor::selfCheck() {
         const float rLo = StrokeRasterizer::effectiveRadius(0.f, p2);
         const float rHi = StrokeRasterizer::effectiveRadius(1.f, p2);
         if (!(rLo < rHi * 0.5f)) return fail("minsize-pressure");
+        BrushPreset p3;
+        p3.lineWidthPx = 40.f;
+        p3.tiltSize = 1.f;
+        const float rFlat = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p3, 1.f, 0.f, -1.f, 0.f, 0.f, 0.f)
+        );
+        const float rTilt = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p3, 1.f, 0.f, -1.f, 0.f, 1.f, 0.f)
+        );
+        if (!(rTilt < rFlat * 0.9f)) return fail("tilt-size");
+        BrushPreset p4;
+        p4.lineWidthPx = 40.f;
+        p4.speedSize = 1.f;
+        const float rSlow = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p4, 1.f, 0.f, -1.f, 0.f)
+        );
+        const float rFast = StrokeRasterizer::effectiveRadius(
+            1.f, StrokeRasterizer::withStrokeDynamics(p4, 1.f, 0.f, -1.f, 800.f)
+        );
+        if (!(rFast < rSlow * 0.9f)) return fail("speed-size");
     }
 
     return true;

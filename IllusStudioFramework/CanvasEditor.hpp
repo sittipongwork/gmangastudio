@@ -123,6 +123,8 @@ public:
     void beginStroke(float x, float y, float pressure);
     void continueStroke(float x, float y, float pressure);
     void endStroke();
+    /// Pencil tilt for dynamics (−1..1); call before/during stroke from UI.
+    void setStrokeTilt(float tiltX, float tiltY);
 
     int32_t strokeCountOnLayer(int32_t layerId) const;
 

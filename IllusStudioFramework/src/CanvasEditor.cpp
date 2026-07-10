@@ -390,6 +390,11 @@ void CanvasEditor::endStroke() {
     impl_->editor.endStroke();
 }
 
+void CanvasEditor::setStrokeTilt(float tiltX, float tiltY) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->editor.setStrokeTilt(tiltX, tiltY);
+}
+
 int32_t CanvasEditor::strokeCountOnLayer(int32_t layerId) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->editor.strokeCountOnLayer(layerId);
@@ -472,7 +477,7 @@ bool CanvasEditor::selfCheck() {
 }
 
 const char* CanvasEditor::version() {
-    return "IllusStudioFramework 0.7.0-cxx";
+    return "IllusStudioFramework 0.8.0-cxx";
 }
 
 } // namespace illus

@@ -88,16 +88,9 @@ bool renderStrokeStrip(
     preset.mode = BrushMode::Paint;
     preset.color = math::RGBA{255, 255, 255, 255};
     preset.opacity = 1.f;
-    // Fit brush into strip height.
+    // Fit brush into strip height — honor imported spacing/flow (engine-true preview).
     preset.lineWidthPx = clampf(preset.lineWidthPx, 3.f, static_cast<float>(kSrcH) * 0.42f);
-    // Match resolvedPreset: grain needs low flow; tip-only can go dense.
-    if (preset.grainTextureId >= 0) {
-        preset.spacing = std::min(std::max(preset.spacing, 0.04f), 0.14f);
-        preset.flow = std::min(preset.flow, 0.32f);
-    } else if (preset.tipTextureId >= 0) {
-        preset.spacing = std::min(preset.spacing, 0.12f);
-        preset.flow = std::max(preset.flow, 0.85f);
-    }
+    if (preset.grainTextureId >= 0 && preset.grainDepth < 0.05f) preset.grainDepth = 1.f;
 
     const float pad = 12.f;
     const float midY = static_cast<float>(kSrcH) * 0.55f;
@@ -107,22 +100,24 @@ bool renderStrokeStrip(
 
     float carry = 0.f;
     float strokeDist = 0.f;
+    const float totalLen = static_cast<float>(kSrcW) - 2.f * pad;
     math::Rect dirty{};
     StrokeSample prev{pad, yAt(0.f), 1.f};
     {
-        const BrushPreset dab = StrokeRasterizer::withStrokeDynamics(preset, 1.f, 0.f);
-        StrokeRasterizer::stampDab(buf.data(), kSrcW, kSrcH, prev.x, prev.y, 1.f, dab, dirty, &assets);
+        const BrushPreset dab = StrokeRasterizer::withStrokeDynamics(preset, 1.f, 0.f, totalLen);
+        StrokeRasterizer::stampDab(buf.data(), kSrcW, kSrcH, prev.x, prev.y, 1.f, dab, dirty, &assets, 0.f);
     }
     constexpr int kSegs = 24;
     for (int i = 1; i <= kSegs; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(kSegs);
         StrokeSample next{
-            pad + t * (static_cast<float>(kSrcW) - 2.f * pad),
+            pad + t * totalLen,
             yAt(t),
             1.f
         };
+        next.t = t;
         StrokeRasterizer::stampSegment(
-            buf.data(), kSrcW, kSrcH, prev, next, preset, carry, strokeDist, dirty, nullptr, &assets
+            buf.data(), kSrcW, kSrcH, prev, next, preset, carry, strokeDist, dirty, nullptr, &assets, totalLen
         );
         prev = next;
     }
@@ -333,24 +328,18 @@ BrushPreset BrushLibrary::resolvedPreset() const {
     out.opacityPressure = clampf(out.opacityPressure, 0.f, 1.f);
     out.minSize = clampf(out.minSize, 0.f, 1.f);
     out.taperSize = clampf(out.taperSize, 0.f, 1.f);
+    out.taperEndSize = clampf(out.taperEndSize, 0.f, 1.f);
     out.taperOpacity = clampf(out.taperOpacity, 0.f, 1.f);
     out.taperPressure = clampf(out.taperPressure, 0.f, 1.f);
     out.grainScale = std::max(0.05f, out.grainScale);
     out.grainDepth = clampf(out.grainDepth, 0.f, 1.f);
-    // Tip-only ink: dense solid. Grain/hatch: keep flow low so texture holes survive overlaps.
-    if (out.grainTextureId >= 0) {
-        // False-zero grainDepth from import would paint solid — treat as full punch.
-        if (out.grainDepth < 0.05f) out.grainDepth = 1.f;
-        out.spacing = std::min(std::max(out.spacing, 0.04f), 0.14f);
-        out.flow = std::min(out.flow, 0.32f);
-        out.hardness = std::max(out.hardness, 0.55f);
-    } else if (out.tipTextureId >= 0) {
-        out.spacing = std::min(out.spacing, 0.12f);
-        out.flow = std::max(out.flow, 0.85f);
-        out.hardness = std::max(out.hardness, 0.75f);
-    } else {
-        out.spacing = std::min(out.spacing, 0.15f);
-    }
+    out.roundness = clampf(out.roundness, 0.15f, 1.f);
+    out.scatter = clampf(out.scatter, 0.f, 1.f);
+    out.rotationJitter = clampf(out.rotationJitter, 0.f, 1.f);
+    out.stampCount = std::clamp(out.stampCount, 1, 4);
+    out.spacing = clampf(out.spacing, 0.02f, 0.35f);
+    // Honor imported params — only fix false-zero grainDepth when grain is present.
+    if (out.grainTextureId >= 0 && out.grainDepth < 0.05f) out.grainDepth = 1.f;
     return out;
 }
 
@@ -423,12 +412,22 @@ bool BrushLibrary::copyPresetPreviewRGBA(
     const BrushPreset* p = find(id);
     if (!p) return false;
 
+    // Engine-true strip first (same stamper as canvas). QuickLook is Procreate art — optional fallback.
+    if (renderStrokeStrip(*p, assets_, outW, outH, outRGBA)) {
+        int covered = 0;
+        const int32_t n = outW * outH;
+        for (int32_t i = 0; i < n; ++i) {
+            if (outRGBA[static_cast<size_t>(i) * 4u + 3u] > 20) ++covered;
+        }
+        if (covered >= 20) return true;
+    }
     if (p->previewTextureId >= 0) {
+        std::memset(outRGBA, 0, static_cast<size_t>(need));
         if (const BrushTexture* tex = assets_.find(p->previewTextureId)) {
             if (letterboxTexture(*tex, outW, outH, outRGBA)) return true;
         }
     }
-    return renderStrokeStrip(*p, assets_, outW, outH, outRGBA);
+    return false;
 }
 
 } // namespace illus

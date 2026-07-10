@@ -64,6 +64,8 @@ public:
     void beginStroke(float x, float y, float pressure);
     void continueStroke(float x, float y, float pressure);
     void endStroke();
+    /// Apple Pencil tilt (−1..1-ish); applied to the next stroke samples.
+    void setStrokeTilt(float tiltX, float tiltY);
 
     int32_t strokeCountOnLayer(int32_t layerId) const;
 
@@ -132,6 +134,8 @@ private:
     float strokeDistPx_ = 0.f;
     bool haveSmoothed_ = false;
     StrokeSample smoothed_{};
+    float strokeTiltX_ = 0.f;
+    float strokeTiltY_ = 0.f;
 
     MetalRenderer metal_;
     LayerCompositor gpu_;

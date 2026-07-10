@@ -1,6 +1,6 @@
 //
 //  StrokeRasterizer.hpp
-//  IllusStudioFramework — CPU vector → layer pixels
+//  IllusStudioFramework — CPU vector → layer pixels (StampEngine)
 //
 
 #pragma once
@@ -17,8 +17,7 @@ namespace illus {
 
 class StrokeRasterizer {
 public:
-    /// Stamp one dab into a full-frame RGBA buffer (size width*height*4).
-    /// `assets` optional — used when preset.tipTextureId is set.
+    /// Stamp one dab. `strokeDistPx` drives Moving grain + dynamics.
     static bool stampDab(
         uint8_t* pixels,
         int32_t width,
@@ -28,10 +27,10 @@ public:
         float pressure,
         const BrushPreset& preset,
         math::Rect& dirty,
-        const BrushAssetStore* assets = nullptr
+        const BrushAssetStore* assets = nullptr,
+        float strokeDistPx = 0.f
     );
 
-    /// Stamp one dab onto a layer (ensures pixels).
     static bool stampDab(
         Layer& layer,
         int32_t width,
@@ -41,7 +40,8 @@ public:
         float pressure,
         const BrushPreset& preset,
         math::Rect& dirty,
-        const BrushAssetStore* assets = nullptr
+        const BrushAssetStore* assets = nullptr,
+        float strokeDistPx = 0.f
     );
 
     static void stampSegment(
@@ -55,7 +55,8 @@ public:
         float& strokeDistPx,
         math::Rect& dirty,
         StrokeBounds* bounds,
-        const BrushAssetStore* assets = nullptr
+        const BrushAssetStore* assets = nullptr,
+        float totalStrokeLen = -1.f
     );
 
     static void stampSegment(
@@ -69,16 +70,30 @@ public:
         float& strokeDistPx,
         math::Rect& dirty,
         StrokeBounds* bounds,
-        const BrushAssetStore* assets = nullptr
+        const BrushAssetStore* assets = nullptr,
+        float totalStrokeLen = -1.f
     );
 
     static float effectiveRadius(float pressure, const BrushPreset& preset);
 
-    /// Procreate-like start taper (0..1) from distance along stroke.
-    static float strokeTaperFactor(float strokeDistPx, float pressure, const BrushPreset& preset);
+    /// Start (+ optional end when totalLen >= 0) taper factor 0..1.
+    static float strokeTaperFactor(
+        float strokeDistPx,
+        float pressure,
+        const BrushPreset& preset,
+        float totalStrokeLen = -1.f
+    );
 
-    /// Apply taper to width/opacity for a dab at `strokeDistPx`.
-    static BrushPreset withStrokeDynamics(const BrushPreset& preset, float pressure, float strokeDistPx);
+    /// Apply taper / speed / tilt / pressure curves for a dab.
+    static BrushPreset withStrokeDynamics(
+        const BrushPreset& preset,
+        float pressure,
+        float strokeDistPx,
+        float totalStrokeLen = -1.f,
+        float speed = 0.f,
+        float tiltX = 0.f,
+        float tiltY = 0.f
+    );
 };
 
 } // namespace illus

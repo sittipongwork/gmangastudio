@@ -2,7 +2,7 @@
 
 Feature spec + design for brush library, eraser, **Color Fill (ColorDrop)**, and the **Hybrid (Vector + Raster)** pipeline so the app keeps vector integrity (undo, edit, sharp export) and raster fluidity (soft brushes, blur, fill, high-rate present).
 
-**Status (code):** T1-1…T1-4, T1-7 (import UX + tip/grain assets stored), T2-7-1 done. Paint stamps **into the active layer** (procedural round; tip PNG stamp deferred). Open: T2-6 move/adjust, **T1-7-3b** tip silhouette + grain, **T1-8 Color Fill**, T3 history, image import (T4-1).  
+**Status (code):** T1-1…T1-4, T1-7, **T1-9 BrushModel v2** (StampEngine Shape+Grain), T2-7-1 done. Paint stamps **into the active layer** via tip silhouette + Moving/Texturized grain. Open: T2-6 move/adjust, **T1-8 Color Fill**, T3 history, image import (T4-1), GPU tip+grain (T1-9-5).  
 **Tasks & checkboxes:** [ROADMAP.md](ROADMAP.md)  
 Related: [README.md](../README.md) · [API.md](API.md) · [layer.md](layer.md) · [canvas_document.md](canvas_document.md) · [history.md](history.md) · [AGENTS.md](../../AGENTS.md)
 
@@ -171,7 +171,7 @@ IllusStudioCanvasEditor
 | Cache (Raster) | Per-layer `MTLTexture` (+ CPU fallback) | Dirty upload while stroking |
 | Display | GPU blend + MTKView path | Prefer blend layer textures; CPU composite is fallback / self-check |
 
-**Current code:** Vector samples → CPU `StrokeRasterizer` into **layer** pixels → dirty GPU upload → `LayerCompositor` present. Soft paint live-overlay retired (overlap quality). Tip PNG stamp deferred to T1-7-3b.
+**Current code:** Vector samples → CPU `StrokeRasterizer` (StampEngine) into **layer** pixels → dirty GPU upload → `LayerCompositor` present. Soft paint live-overlay retired (overlap quality). Tip+grain stamp shipped (T1-7-3b / T1-9).
 
 ---
 
@@ -514,7 +514,7 @@ Smoothing is **input filtering** in the Data Layer (before samples land on the s
 
 Goal: let users import brushes the way Procreate does — **`.brush`**, **`.brushset`**, and **`.brushlibrary`** — into `BrushLibrary` sets, with tip/grain assets and a **best-effort** parameter map into `BrushPreset`.
 
-**Status:** T1-7-1…T1-7-6 shipped (public API + DrawingEditor import UX; tip/grain PNGs stored). Stamp path is **procedural round** until [T1-7-3b](ROADMAP.md#t1-7--procreate-style-brush-import) (tip silhouette + grain). Open: Photoshop `.abr` ([T1-7-7](ROADMAP.md#t1-7--procreate-style-brush-import)).
+**Status:** T1-7-1…T1-7-6 + **T1-9** StampEngine shipped. Best-effort Procreate map — **not** “Procreate compatible engine.” List chips use **engine strip** first (QuickLook is not truth). Open: Photoshop `.abr` ([T1-7-7](ROADMAP.md#t1-7--procreate-style-brush-import)).
 
 Procreate’s formats are **proprietary** (Savage Interactive). There is no official public schema. Community reverse-engineering (ZIP + PNG + `Brush.archive` bplist) is good enough for **import**, not for claiming 1:1 engine parity.
 
@@ -640,9 +640,9 @@ DrawingEditor: `presentBrushImport()` / `fileImporter` + approximated badge in B
 | Param map | **T1-7-2** | done | Decode `Brush.archive`; map size/opacity/spacing/smooth/hardness/pressure |
 | Tip assets | **T1-7-3** | done | Import/store tip PNG; stamp deferred (procedural round) |
 | Public + listing APIs | **T1-7-4** | done | `importBrushPackage*`, `brushSetSource`, approximated |
-| Library UX | **T1-7-5** | done | Swift Import UI; list chips = QuickLook or tip/grain stroke strip |
+| Library UX | **T1-7-5** | done | Swift Import UI; list chips = **engine strip** (QuickLook fallback) |
 | `.brushlibrary` | **T1-7-6** | done | Multi-set package |
-| Tip silhouette + grain | **T1-7-3b** | open | Soft tip mask + `grainTextureId` multiply (not raw Shape.png coverage) |
+| Tip silhouette + grain | **T1-7-3b / T1-9** | done | Soft tip mask + Moving/Texturized grain, scatter/count, taper |
 | Photoshop `.abr` | **T1-7-7** | open | Later if needed |
 
 ### Legal / product note
@@ -1052,7 +1052,19 @@ One runnable check covering hybrid invariants:
 
 ## Migration note
 
-Pipeline: append vector samples → `StrokeRasterizer` into **layer** pixels → dirty GPU upload → `LayerCompositor` present. Live-overlay paint was tried (T1-2) and **retired** for quality; do not reintroduce soft paint as a separate overlay without a coverage-correct merge. Tip PNG stamp returns only via **T1-7-3b** (silhouette + grain), not raw Shape.png coverage.
+Pipeline: append vector samples → StampEngine (`StrokeRasterizer`) into **layer** pixels → dirty GPU upload → `LayerCompositor` present. Live-overlay paint was tried (T1-2) and **retired** for quality. Tip+grain uses silhouette + Moving/Texturized grain (T1-9), not raw Shape.png coverage. List previews are **engine-true**; QuickLook is fallback only (not the fidelity bar).
+
+---
+
+## Beyond Procreate (north star)
+
+After StampEngine fidelity is good enough for patterned brushes:
+
+1. **Editable vector strokes (T2-6)** — move/reshape/recolor without raster corruption.
+2. **Manga tools** — screen-tone presets, Color Fill (T1-8), panel-aware hatch later.
+3. **GPU StampEngine (T1-9-5)** — tip+grain at 120Hz once the CPU model is correct.
+
+Still out: wet mix / dual / smudge parity; “Procreate compatible” marketing.
 
 ---
 
@@ -1075,4 +1087,4 @@ Pipeline: append vector samples → `StrokeRasterizer` into **layer** pixels →
 
 Implement brushes and eraser as **vector strokes** that are **rasterized into per-layer Metal (or CPU) caches** and **composited on the GPU** for display. Users adjust **line width, line smooth, hardness, opacity, …** on a **`BrushSession` before drawing**; each stroke freezes a `presetSnapshot`. **Procreate `.brush` / `.brushset` / `.brushlibrary` import** unpacks ZIP + tip PNGs + best-effort `Brush.archive` mapping into `BrushLibrary` sets — not a 1:1 engine clone. **Color Fill (ColorDrop)** floods flats into closed regions with threshold + optional Reference layer for ink/color separation.
 
-**Shipped:** T1-1…T1-4, T1-7 (except tip+grain stamp / ABR), T2-7-1; solid procedural paint into layer. **Next:** T1-8 Color Fill, T2-6 move/adjust, T1-7-3b tip+grain, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).
+**Shipped:** T1-1…T1-4, T1-7, T1-9 BrushModel v2, T2-7-1. **Next:** T1-8 Color Fill, T2-6 move/adjust (beyond-Procreate), T1-9-5 GPU stamp, T3 history, T4 import/export. Checkboxes: [ROADMAP.md](ROADMAP.md).

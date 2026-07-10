@@ -81,7 +81,8 @@ Spec: [layer.md](layer.md). Blend-mode getters/setters: planned ([T0-12](ROADMAP
 | `brushPresetName(index)` | `const char*` | Flat index |
 | `brushPresetNameInSet(setIndex, presetIndex)` | `const char*` | Name within set |
 | `brushPresetApproximated(setIndex, presetIndex)` | `bool` | Imported preset with incomplete map |
-| `copyBrushPresetPreviewRGBA(set, preset, w, h, rgba, n)` | `bool` | List chip: QuickLook or tip/grain strip |
+| `copyBrushPresetPreviewRGBA(set, preset, w, h, rgba, n)` | `bool` | List chip: **engine strip** first; QuickLook fallback |
+| `setStrokeTilt(tiltX, tiltY)` | `void` | Pencil tilt for size/opacity dynamics |
 | `setBrushPreset(index)` | `bool` | Flat index |
 | `setBrushPresetInSet(setIndex, presetIndex)` | `bool` | |
 | `activeBrushPresetIndex()` | `int32_t` | Flat index |

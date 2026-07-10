@@ -54,7 +54,7 @@ struct DrawingEditorView: View {
                             highPerformancePresent: viewModel.appActiveStatus == .performanceMode,
                             presentFps: viewModel.presentFps,
                             eyedropperActive: viewModel.isEyedropperActive,
-                            onDragChanged: { viewModel.pointerChanged(at: $0, pressure: $1) },
+                            onDragChanged: { viewModel.pointerChanged(at: $0, pressure: $1, tiltX: $2, tiltY: $3) },
                             onDragEnded: { viewModel.pointerEnded() },
                             onPan: { delta, size in viewModel.panBy(delta, viewSize: size) },
                             onZoom: { factor, focus, size in

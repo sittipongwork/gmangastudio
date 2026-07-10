@@ -472,11 +472,12 @@ final class DrawingEditorViewModel {
         syncViewportFromEditor()
     }
 
-    func pointerChanged(at point: CGPoint, pressure: Float = 1) {
+    func pointerChanged(at point: CGPoint, pressure: Float = 1, tiltX: Float = 0, tiltY: Float = 0) {
         noteUserActivity()
         guard mode != .pointer, !isEyedropperActive else { return }
         let p = min(max(pressure, 0.05), 1)
         var ed = editor
+        ed.setStrokeTilt(tiltX, tiltY)
         if isStroking {
             ed.continueStroke(Float(point.x), Float(point.y), p)
         } else {

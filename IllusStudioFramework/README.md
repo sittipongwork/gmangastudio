@@ -2,7 +2,7 @@
 
 C++ canvas engine for gmangastudio. Swift UI lives in page COPs (`DrawingEditor`); this framework owns document, layers, tools, viewport, and rendering. History, animation, and export are planned. See [AGENTS.md](../AGENTS.md) for the UI ↔ Engine contract.
 
-**Version:** `0.7.0-cxx` (`CanvasEditor::version()`)  
+**Version:** `0.8.0-cxx` (`CanvasEditor::version()`)  
 **Tasks & roadmap (status):** [docs/ROADMAP.md](docs/ROADMAP.md)  
 **Public API index:** [docs/API.md](docs/API.md)  
 **Feature specs:** [canvas_document.md](docs/canvas_document.md) · [layer.md](docs/layer.md) · [brush_drawing.md](docs/brush_drawing.md) · [history.md](docs/history.md) · [animation_timeline.md](docs/animation_timeline.md) · [AI_Integration.md](docs/AI_Integration.md)
@@ -13,9 +13,9 @@ Build **IllusStudioCanvasEditor** (Procreate-style drawing editor) core:
 
 - Page settings, layers, brushes/eraser, Procreate `.brush` / `.brushset` / `.brushlibrary` import
 - Zoom/pan, Metal present (adaptive 72/120Hz + idle 5Hz in UI)
-- Hybrid vector + raster: paint stamps into layer (procedural round); GPU composite
-- Planned: tip silhouette + grain (T1-7-3b), undo/redo, timelapse, animation + timeline, image import, export PNG / SVG / TIFF
-
+- Hybrid vector + raster: Shape+Grain stamp into layer (StampEngine); GPU composite
+- BrushModel v2: tip silhouette, Moving/Texturized grain, scatter/count, start+end taper, speed/tilt dynamics
+- Planned: undo/redo, timelapse, animation + timeline, image import, export PNG / SVG / TIFF, editable strokes (T2-6), Color Fill (T1-8)
 Swift UI uses the public C++ API via Swift–C++ interop (`SWIFT_OBJC_INTEROP_MODE = objcxx`). No C bridge.
 
 ```text

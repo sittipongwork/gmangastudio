@@ -13,7 +13,7 @@ Architecture / design: [README.md](../README.md) · API: [API.md](API.md) · Spe
 | Id | Epic | Status |
 |----|------|--------|
 | [T0](#t0--foundation-document--layers) | Foundation (document + layers + CPU composite) | done (blend modes open) |
-| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import, Color Fill) | T1-1…T1-4 + T1-7 done; paint→layer (overlay retired); T1-3-3 / T1-7-3b / T1-7-7 / **T1-8** open |
+| [T1](#t1--hybrid-brush-library--eraser) | Hybrid brush library & eraser (+ session props, Procreate import, Color Fill) | T1-1…T1-4 + T1-7 + **T1-9 BrushModel v2** done; T1-3-3 / T1-7-7 / **T1-8** open |
 | [T2](#t2--viewport-zoom--pan) | Viewport (zoom / pan) + move/adjust + hybrid follow-ups | T2-1…T2-5 + T2-7-1 done (T2-6 / T2-7-2/3 open) |
 | [T3](#t3--history-undo--redo--timelapse) | History (undo / redo / timelapse) | open |
 | [T4](#t4--import--export) | Import & export (PNG / TIFF / SVG) | open |
@@ -101,9 +101,20 @@ Import `.brush` / `.brushset` (later `.brushlibrary`) into `BrushLibrary`. Desig
 - [x] **T1-7-3** Tip assets import + store; CPU tip stamp (bilinear + invert + silhouette); grain multiply (**T1-7-3b**)
 - [x] **T1-7-3b** Grain multiply in dab path; Procreate minSize / taperSize / pressure-curve endpoints mapped
 - [x] **T1-7-4** Public `importBrushPackage` / `importBrushPackageBytes` + set listing APIs (`brushSetSource`, `brushPresetApproximated`)
-- [x] **T1-7-5** Swift DrawingEditor: Import UI, Imported set, “approximated” badge; list chips use QuickLook / tip strip previews
+- [x] **T1-7-5** Swift DrawingEditor: Import UI, Imported set, “approximated” badge; list chips prefer **engine strip** (QuickLook fallback only)
 - [x] **T1-7-6** `.brushlibrary` as multi-set; fixture self-check in repo test resources
 - [ ] **T1-7-7** (Later) Photoshop `.abr` import if still needed
+
+### T1-9 — BrushModel v2 (Procreate-faithful StampEngine)
+
+Shape + Grain + Stroke Path overhaul. Not wet-mix / dual / smudge. Design: [brush_drawing.md](brush_drawing.md).
+
+- [x] **T1-9-1** StampEngine: tip silhouette, ellipse `roundness`, Moving vs Texturized grain, scatter/count, start+end taper
+- [x] **T1-9-2** Import map v2: calibrated size (×48), spacing, grain movement/jitter/count, no false-zero grainDepth; honor spacing/flow (no resolvedPreset fights)
+- [x] **T1-9-3** Engine-true list preview first; QuickLook optional fallback
+- [x] **T1-9-4** Dynamics: pressure curve endpoints, speed→size/opacity/spacing, tilt→size/opacity + `setStrokeTilt`
+- [ ] **T1-9-5** (Later) GPU tip+grain StampEngine @ 120Hz once CPU model is stable
+- [ ] **T1-9-6** (Beyond) Editable vector strokes T2-6, manga screen-tone presets, Color Fill T1-8
 
 ### T1-8 — Color Fill (ColorDrop)
 
@@ -269,16 +280,16 @@ Policy & samples: [cpp-math-libs skill](../../.cursor/skills/cpp-math-libs/SKILL
 
 ## Suggested order
 
-**Done:** T0 (except T0-12) · T6 · T1-1…T1-4 · T1-7 (except tip+grain stamp T1-7-3b / ABR T1-7-7) · T2-1…T2-5 · T2-7-1 · TX-7  
-**Paint quality (current):** CPU procedural round dabs → layer (`blendPaintOver` same-color coverage); spacing/flow/hardness floored for imported tip presets; straight-alpha present.
+**Done:** T0 (except T0-12) · T6 · T1-1…T1-4 · T1-7 · **T1-9 BrushModel v2** · T2-1…T2-5 · T2-7-1 · TX-7  
+**Paint quality (current):** CPU StampEngine (Shape+Grain, Moving/Texturized) → layer; engine-true previews; dynamics speed/tilt/curves.
 
 ```text
 Next:
   T0-12 (layer blend modes; Normal already; can parallel T2-6 / T1-8)
   → T1-8 (Color Fill / ColorDrop; Reference layer)
-  → T2-6 (move/adjust + gizmo)
-  → T1-7-3b (tip silhouette + grain; not raw Shape.png coverage)
-  → T2-7-2 / T2-7-3 (tilt; stroke→tile index)
+  → T2-6 (move/adjust + gizmo)           ← beyond-Procreate vector edit
+  → T1-9-5 (GPU tip+grain @ 120Hz)
+  → T2-7-2 / T2-7-3 (tilt UI wire; stroke→tile index)
   → T3 (history; stroke list + FillCommand ready)
   → T4 → T5
   (TX-7 done — keep libs; follow best-use table above)
